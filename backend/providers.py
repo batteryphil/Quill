@@ -115,14 +115,19 @@ class OpenAICompatProvider(BaseProvider):
         max_tokens: int,
         temperature: float,
         stop: list[str] | None = None,
+        frequency_penalty: float = 1.3,
+        presence_penalty: float = 0.6,
     ) -> AsyncIterator[str]:
         """Stream tokens from an OpenAI-compatible endpoint."""
         payload = {
-            "model":       self.model,
-            "messages":    messages,
-            "max_tokens":  max_tokens,
-            "temperature": temperature,
-            "stream":      True,
+            "model":             self.model,
+            "messages":         messages,
+            "max_tokens":       max_tokens,
+            "temperature":      temperature,
+            "stream":           True,
+            "frequency_penalty": frequency_penalty,   # penalise repeated tokens
+            "presence_penalty":  presence_penalty,    # penalise already-seen tokens
+            "repeat_penalty":    frequency_penalty,   # llama.cpp alias
         }
         if stop:
             payload["stop"] = stop

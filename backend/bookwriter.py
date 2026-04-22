@@ -631,6 +631,7 @@ async def _run_book_job(job_id: str) -> None:
 
             # ── Stream scene tokens ───────────────────────────────────────
             scene_text = ""
+            _rep_check_buf = ""   # sliding window for duplicate detection
             async for token in _write_scene(
                 config=job.config,
                 chapter_title=s["chapter_title"],
@@ -640,9 +641,25 @@ async def _run_book_job(job_id: str) -> None:
                 words_per_scene=words_per_scene,
                 book_title=job.outline.get("title", ""),
             ):
-                scene_text        += token
+                scene_text         += token
                 job.current_tokens += token
+                _rep_check_buf     += token
                 _emit(job, {"type": "token", "text": token})
+
+                # ── Repetition detector ───────────────────────────────────
+                # Every ~80 tokens check if the latest paragraph is a copy
+                if len(_rep_check_buf) > 300:
+                    paragraphs = [p.strip() for p in scene_text.split("\n") if len(p.strip()) > 60]
+                    if len(paragraphs) >= 2:
+                        last_para = paragraphs[-1]
+                        # If the last paragraph appears verbatim earlier, stop
+                        if last_para in "\n".join(paragraphs[:-1]):
+                            # Trim the repeated tail before saving
+                            idx = scene_text.rfind(last_para)
+                            if idx > 0:
+                                scene_text = scene_text[:idx].rstrip()
+                            break
+                    _rep_check_buf = ""   # reset window
 
                 # Cancel mid-scene support
                 if job._cancel_flag:
