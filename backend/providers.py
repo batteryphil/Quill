@@ -406,7 +406,7 @@ class AnthropicProvider(BaseProvider):
                         except json.JSONDecodeError:
                             continue
         except httpx.HTTPStatusError as exc:
-            yield f"[ERROR] Anthropic API: {exc.response.text[:200]}"
+            yield f"[ERROR] Anthropic API: {'(see server logs for details)'}"
         except httpx.RequestError as exc:
             yield f"[ERROR] Cannot reach Anthropic: {exc}"
 
@@ -549,7 +549,7 @@ class GeminiProvider(BaseProvider):
                         except json.JSONDecodeError:
                             continue
         except httpx.HTTPStatusError as exc:
-            yield f"[ERROR] Gemini API: {exc.response.text[:200]}"
+            yield f"[ERROR] Gemini API: {'(see server logs for details)'}"
         except httpx.RequestError as exc:
             yield f"[ERROR] Cannot reach Gemini: {exc}"
 

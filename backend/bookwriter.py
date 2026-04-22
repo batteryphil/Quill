@@ -679,7 +679,14 @@ async def _run_book_job(job_id: str) -> None:
 
                 # Index in RAG for future scenes
                 try:
-                    summary = s["beat"]
+                    # Clean markdown and grab first ~200 chars for semantic search
+                    import re
+                    clean_text = re.sub(r'#.*?\n', '', scene_text)
+                    clean_text = re.sub(r'\*+', '', clean_text)
+                    summary = clean_text.strip()[:200]
+                    if not summary:
+                        summary = s["beat"]
+                        
                     await upsert_scene(
                         project_id=job.project_id,
                         scene_id=sid,
