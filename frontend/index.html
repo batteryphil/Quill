@@ -53,9 +53,14 @@
         <div id="project-title">Untitled</div>
       </div>
       <div class="sidebar-header-btns">
+        <button id="btn-update"
+                class="sidebar-icon-btn"
+                title="Check for updates">
+          &#x2191;
+        </button>
         <button id="btn-settings"
                 class="sidebar-icon-btn"
-                title="Provider settings (&#x2699;)">
+                title="Provider settings">
           &#x2699;
         </button>
         <button id="btn-export"
@@ -337,6 +342,14 @@
 <script type="module">
   import { openSettingsModal } from "/js/settings.js";
   document.getElementById("btn-settings")?.addEventListener("click", openSettingsModal);
+</script>
+
+<!-- ── Update modal trigger ─────────────────────────────────── -->
+<script type="module">
+  import { initUpdater, openUpdateModal } from "/js/updater.js";
+  document.getElementById("btn-update")?.addEventListener("click", openUpdateModal);
+  // Check on load (throttled to once/hour)
+  initUpdater();
 </script>
 
 </body>

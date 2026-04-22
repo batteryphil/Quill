@@ -1465,3 +1465,144 @@ body.focus-mode #right-sidebar { display: none !important; }
   background: #f3f4f6;
   border-color: #d1d5db;
 }
+
+/* ─── Update button badge ────────────────────────────────────────────────── */
+
+#btn-update {
+  position: relative;
+}
+
+#btn-update.update-available::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;   /* ai-green */
+  border: 1.5px solid var(--sidebar-bg);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%       { transform: scale(1.4); opacity: 0.7; }
+}
+
+/* ─── Update modal ───────────────────────────────────────────────────────── */
+
+.update-card {
+  width: 520px;
+  max-width: 96vw;
+}
+
+.update-available-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  color: #065f46;
+  font-size: 0.82rem;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.update-ok-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 0.82rem;
+  margin-bottom: 14px;
+}
+.update-error-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 0.82rem;
+  margin-bottom: 14px;
+}
+
+.update-sha {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: #6b7280;
+  background: #f3f4f6;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+/* Commit list */
+.update-commits {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  font-size: 0.78rem;
+}
+.update-commits-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #6b7280;
+  padding: 7px 12px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #f3f4f6;
+}
+.update-commit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #f9fafb;
+}
+.update-commit-row:last-child { border-bottom: none; }
+.update-commit-sha {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: #7c3aed;
+  flex-shrink: 0;
+}
+.update-commit-msg {
+  flex: 1;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.update-commit-date {
+  font-size: 0.68rem;
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+/* Progress log */
+.update-progress {
+  max-height: 180px;
+  overflow-y: auto;
+  background: #0d1117;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  margin-bottom: 14px;
+  scroll-behavior: smooth;
+}
+.update-progress.hidden { display: none; }
+
+.update-line         { color: #c9d1d9; margin: 1px 0; }
+.update-line--git    { color: #79c0ff; }
+.update-line--pip    { color: #a5d6a7; }
+.update-line--done   { color: #56d364; font-weight: 600; }
+.update-line--error  { color: #ff7b72; }
+
+.update-apply-btn {
+  background: var(--ai-violet) !important;
+}
