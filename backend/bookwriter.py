@@ -142,9 +142,11 @@ _JOBS: dict[str, BookJob] = {}
 
 _OUTLINE_SYSTEM = (
     "You are an expert novelist creating a detailed book outline. "
-    "Output ONLY a JSON object — no other text, no markdown fences.\n\n"
-    'Format: {"title":"...", "acts":[{"name":"Act 1: Setup", '
-    '"chapters":[{"title":"...", "scenes":["one-sentence beat","...","..."]}]}]}'
+    "Output ONLY a valid JSON object — absolutely no other text, no markdown, no backticks.\n\n"
+    "Required format:\n"
+    '{"title":"...", "acts":['
+    '{"name":"Act 1: Setup",'
+    '"chapters":[{"title":"...","scenes":["One-sentence scene beat.","...","..."]}]}]}'
 )
 
 
@@ -180,11 +182,18 @@ async def _generate_outline(config: dict) -> dict:
 
     provider = get_active_provider()
     full_text = ""
+
+    # Use a higher token budget for the outline; disable Gemini thinking budget
+    outline_max_tokens = 2000
+
+    # For Gemini 2.5 providers, pass thinking config via a patched payload
+    # by temporarily overriding the model's gen_config in a direct call if needed.
+    # The provider.stream() path already handles this via thinkingConfig.
     async for token in provider.stream(
         messages=messages,
-        max_tokens=1200,
-        temperature=0.7,
-        stop=["\n\n\n"],
+        max_tokens=outline_max_tokens,
+        temperature=0.5,
+        stop=[],
     ):
         full_text += token
 
@@ -426,6 +435,71 @@ def _save_scene_to_project(
 # ---------------------------------------------------------------------------
 
 
+def _seed_project_context(project_id: str, config: dict) -> None:
+    """
+    Write protagonist, antagonist, and world facts into the project state
+    so that build_rag_context() has content to inject into every scene prompt.
+
+    Creates/overwrites:
+        state/characters.json  — character cards for protagonist + antagonist
+        style_guide.md         — premise, setting, genre, tone
+
+    Args:
+        project_id: Target project ID.
+        config:     BookConfig dict with protagonist, antagonist, setting, etc.
+    """
+    proj_dir   = _project_dir(project_id)
+    state_dir  = proj_dir / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Character cards ───────────────────────────────────────────────────
+    chars: dict = {}
+
+    protagonist = config.get("protagonist", "").strip()
+    antagonist  = config.get("antagonist", "").strip()
+
+    if protagonist:
+        # Extract just the name (first token before comma)
+        name = protagonist.split(",")[0].split("—")[0].strip()
+        chars[name] = {
+            "name":        name,
+            "role":        "protagonist",
+            "description": protagonist,
+            "traits":      "",
+            "arc":         "",
+        }
+
+    if antagonist:
+        name = antagonist.split(",")[0].split("—")[0].strip()
+        chars[name] = {
+            "name":        name,
+            "role":        "antagonist",
+            "description": antagonist,
+            "traits":      "",
+            "arc":         "",
+        }
+
+    char_path = state_dir / "characters.json"
+    char_path.write_text(json.dumps(chars, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # ── Style guide (world facts, premise, tone) ──────────────────────────
+    style_guide = (
+        f"# Book Bible\n\n"
+        f"## Genre\n{config.get('genre', 'fiction')}\n\n"
+        f"## Tone\n{config.get('tone', 'balanced')}\n\n"
+        f"## Point of View\n{config.get('pov', 'third person limited')}\n\n"
+        f"## Setting\n{config.get('setting', 'Not specified')}\n\n"
+        f"## Premise\n{config.get('premise', '')}\n\n"
+    )
+    if protagonist:
+        style_guide += f"## Protagonist\n{protagonist}\n\n"
+    if antagonist:
+        style_guide += f"## Antagonist\n{antagonist}\n\n"
+
+    (proj_dir / "style_guide.md").write_text(style_guide, encoding="utf-8")
+
+
+
 def _emit(job: BookJob, event: dict) -> None:
     """
     Push an SSE event to all current subscribers of this job.
@@ -465,9 +539,21 @@ async def _run_book_job(job_id: str) -> None:
     try:
         # ── 1. Generate outline ───────────────────────────────────────────
         _emit(job, {"type": "status", "status": "outline"})
-        outline = await _generate_outline(job.config)
+        try:
+            outline = await _generate_outline(job.config)
+        except Exception as outline_err:
+            import traceback
+            print(f"[Quill] Outline generation error: {outline_err}")
+            traceback.print_exc()
+            outline = _synthesise_outline(job.config)
         job.outline = outline
         _emit(job, {"type": "outline_ready", "outline": outline, "title": outline.get("title", "")})
+
+        # ── 2. Seed characters + world facts into project state ────────────
+        try:
+            _seed_project_context(job.project_id, job.config)
+        except Exception as seed_err:
+            print(f"[Quill] Seed context error (non-fatal): {seed_err}")
 
         # Flatten scenes
         flat_scenes: list[dict] = []

@@ -461,8 +461,8 @@ class GeminiProvider(BaseProvider):
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-1.5-flash",
-        timeout: float = 90.0,
+        model: str = "gemini-2.5-flash",
+        timeout: float = 180.0,
     ) -> None:
         """Initialise a Gemini provider."""
         self.api_key = api_key
@@ -497,12 +497,19 @@ class GeminiProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         """Stream tokens from Gemini streamGenerateContent."""
         system_text, contents = self._adapt_messages(messages)
+
+        gen_config: dict = {
+            "maxOutputTokens": max_tokens,
+            "temperature":     temperature,
+        }
+        # Disable extended thinking on Gemini 2.5 models — it burns the token
+        # budget silently and leaves almost nothing for actual output.
+        if "2.5" in self.model or "2-5" in self.model:
+            gen_config["thinkingConfig"] = {"thinkingBudget": 0}
+
         payload: dict = {
             "contents":         contents,
-            "generationConfig": {
-                "maxOutputTokens": max_tokens,
-                "temperature":     temperature,
-            },
+            "generationConfig": gen_config,
         }
         if system_text:
             payload["system_instruction"] = {
@@ -528,6 +535,9 @@ class GeminiProvider(BaseProvider):
                             ev = json.loads(raw)
                             for cand in ev.get("candidates", []):
                                 for part in cand.get("content", {}).get("parts", []):
+                                    # Skip thought parts (Gemini 2.5 thinking blocks)
+                                    if part.get("thought"):
+                                        continue
                                     token = part.get("text", "")
                                     if token:
                                         yield token
@@ -569,8 +579,9 @@ class GeminiProvider(BaseProvider):
             return {"ok": False, "message": str(exc)}
 
     async def list_models(self) -> list[str]:
-        """Return known Gemini model IDs (no official key-less listing endpoint)."""
+        """Return known Gemini model IDs."""
         return [
+            "gemini-2.5-flash",
             "gemini-2.0-flash",
             "gemini-2.0-flash-lite",
             "gemini-1.5-flash",

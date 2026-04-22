@@ -274,6 +274,11 @@ function showNewProjectModal() {
 }
 
 document.getElementById("btn-new-project")?.addEventListener("click", showNewProjectModal);
+// Also wire the in-editor sidebar + button
+document.getElementById("btn-new-project-sidebar")?.addEventListener("click", showNewProjectModal);
+
+// Expose binder refresh so bookwriter can trigger it after completion
+window.__binderRefresh = () => renderProjectList();
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 
