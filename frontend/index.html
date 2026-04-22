@@ -58,6 +58,11 @@
                 title="Check for updates">
           &#x2191;
         </button>
+        <button id="btn-write-book"
+                class="sidebar-icon-btn"
+                title="AI Write Full Book">
+          &#x270D;
+        </button>
         <button id="btn-settings"
                 class="sidebar-icon-btn"
                 title="Provider settings">
@@ -350,6 +355,16 @@
   document.getElementById("btn-update")?.addEventListener("click", openUpdateModal);
   // Check on load (throttled to once/hour)
   initUpdater();
+</script>
+
+<!-- ── Book Writer trigger ─────────────────────────────── -->
+<script type="module">
+  import { openBookWriter } from "/js/bookwriter.js";
+  document.getElementById("btn-write-book")?.addEventListener("click", () => {
+    const projectId    = document.body.dataset.projectId;
+    const projectTitle = document.getElementById("project-title")?.textContent?.trim() || "Untitled";
+    openBookWriter(projectId, projectTitle);
+  });
 </script>
 
 </body>
