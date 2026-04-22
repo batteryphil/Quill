@@ -183,15 +183,10 @@ async def _generate_outline(config: dict) -> dict:
     provider = get_active_provider()
     full_text = ""
 
-    # Use a higher token budget for the outline; disable Gemini thinking budget
-    outline_max_tokens = 2000
-
-    # For Gemini 2.5 providers, pass thinking config via a patched payload
-    # by temporarily overriding the model's gen_config in a direct call if needed.
-    # The provider.stream() path already handles this via thinkingConfig.
+    # 40 scenes × ~50 words/scene in JSON overhead ≈ 3200 tokens needed
     async for token in provider.stream(
         messages=messages,
-        max_tokens=outline_max_tokens,
+        max_tokens=3200,
         temperature=0.5,
         stop=[],
     ):
@@ -269,7 +264,12 @@ _SCENE_SYSTEM_TMPL = (
     "You are a skilled {genre} novelist writing in {pov} POV. "
     "Write vivid, immersive, character-driven prose. Show, don't tell. "
     "No chapter headers or scene numbers — just continuous prose. "
-    "Target length: ~{words} words."
+    "Target length: ~{words} words.\n\n"
+    "STORY CONTEXT:\n"
+    "Title: {title}\n"
+    "Premise: {premise}\n"
+    "{char_block}"
+    "Setting: {setting}"
 )
 
 
@@ -280,6 +280,7 @@ async def _write_scene(
     prev_ending:     str,
     rag_context:     str,
     words_per_scene: int,
+    book_title:      str = "",
 ) -> AsyncIterator[str]:
     """
     Stream prose tokens for a single scene.
@@ -291,14 +292,29 @@ async def _write_scene(
         prev_ending:     Last ~150 words of the previous scene.
         rag_context:     RAG-assembled character + prior scene context.
         words_per_scene: Target word count for this scene.
+        book_title:      Outline title for the system prompt.
 
     Yields:
         Raw text tokens from the LLM provider.
     """
+    protagonist = config.get("protagonist", "").strip()
+    antagonist  = config.get("antagonist", "").strip()
+    char_block  = ""
+    if protagonist:
+        char_block += f"Protagonist: {protagonist}\n"
+    if antagonist:
+        char_block += f"Antagonist:  {antagonist}\n"
+    if char_block:
+        char_block += "\n"
+
     system = _SCENE_SYSTEM_TMPL.format(
-        genre=config.get("genre", "fiction"),
-        pov=config.get("pov", "third person limited"),
-        words=words_per_scene,
+        genre   = config.get("genre", "fiction"),
+        pov     = config.get("pov", "third person limited"),
+        words   = words_per_scene,
+        title   = book_title or "Untitled",
+        premise = config.get("premise", "")[:400],   # cap to ~300 tokens
+        char_block = char_block,
+        setting = config.get("setting", "not specified"),
     )
 
     context_parts = []
@@ -622,6 +638,7 @@ async def _run_book_job(job_id: str) -> None:
                 prev_ending=prev_ending,
                 rag_context=rag_ctx,
                 words_per_scene=words_per_scene,
+                book_title=job.outline.get("title", ""),
             ):
                 scene_text        += token
                 job.current_tokens += token
