@@ -52,11 +52,18 @@
         <div class="logo">Quil<span>l</span></div>
         <div id="project-title">Untitled</div>
       </div>
-      <button id="btn-export"
-              class="sidebar-export-btn"
-              title="Export manuscript">
-        ↓
-      </button>
+      <div class="sidebar-header-btns">
+        <button id="btn-settings"
+                class="sidebar-icon-btn"
+                title="Provider settings (&#x2699;)">
+          &#x2699;
+        </button>
+        <button id="btn-export"
+                class="sidebar-icon-btn"
+                title="Export manuscript">
+          &#x2193;
+        </button>
+      </div>
     </div>
 
     <div id="binder-tree" role="tree" aria-label="Project structure"></div>
@@ -324,6 +331,12 @@
     }
     openExportModal(projectId, title);
   });
+</script>
+
+<!-- ── Settings modal trigger ──────────────────────────────────── -->
+<script type="module">
+  import { openSettingsModal } from "/js/settings.js";
+  document.getElementById("btn-settings")?.addEventListener("click", openSettingsModal);
 </script>
 
 </body>

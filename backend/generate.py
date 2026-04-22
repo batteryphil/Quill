@@ -2,8 +2,12 @@
 Quill — generation routes.
 
 All endpoints stream via Server-Sent Events (SSE).
-Connects to llama-server's OpenAI-compatible /v1/chat/completions
-and re-emits tokens in our simple format: ``data: <token>\\n\\n``
+Delegates to the active provider (llama-server, Ollama, OpenAI, Anthropic,
+Gemini, Groq, OpenRouter, or any custom OpenAI-compatible endpoint).
+
+SSE format emitted to frontend stream.js:
+    data: <json-encoded token>\n\n
+    data: [DONE]\n\n
 """
 
 import json
@@ -16,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import config
+from .providers import get_active_provider
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 
@@ -71,56 +76,37 @@ class RephraseRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-async def _stream_llama(
+async def _stream(
     messages: list[dict],
     max_tokens: int,
     temperature: float = config.DEFAULT_TEMPERATURE,
-    top_p: float = config.DEFAULT_TOP_P,
     stop: list[str] | None = None,
 ) -> AsyncIterator[str]:
     """
-    Stream tokens from llama-server and yield SSE-formatted strings.
+    Provider-agnostic SSE emitter.
 
-    Emitted format (consumed by frontend stream.js):
-        data: <token>\\n\\n
-        data: [DONE]\\n\\n
+    Delegates to the active provider (configured via /api/settings).
+    Yields SSE-formatted strings consumed by frontend stream.js:
+        data: <json-encoded token>\n\n
+        data: [DONE]\n\n
     """
-    payload = {
-        "model": "quill",
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
-        "stream": True,
-        "stop": stop or config.STOP_SEQUENCES,
-    }
-
+    provider = get_active_provider()
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            async with client.stream(
-                "POST",
-                f"{config.LLAMA_SERVER_URL}/v1/chat/completions",
-                json=payload,
-                headers={"Accept": "text/event-stream"},
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    raw = line[6:].strip()
-                    if raw == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(raw)
-                        token = chunk["choices"][0]["delta"].get("content", "")
-                        if token:
-                            yield f"data: {json.dumps(token)}\n\n"
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-    except httpx.RequestError as exc:
-        yield f"data: {json.dumps('[ERROR] Cannot reach LLM server: ' + str(exc))}\n\n"
+        async for token in provider.stream(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stop=stop or config.STOP_SEQUENCES,
+        ):
+            if token:
+                yield f"data: {json.dumps(token)}\n\n"
+    except Exception as exc:
+        yield f"data: {json.dumps('[ERROR] ' + str(exc))}\n\n"
     finally:
         yield "data: [DONE]\n\n"
+
+# Keep legacy alias so extract.py / audit.py can import without changes
+_stream_llama = _stream
 
 
 # ---------------------------------------------------------------------------

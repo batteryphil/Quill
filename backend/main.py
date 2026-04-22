@@ -16,6 +16,7 @@ from .projects  import router as proj_router
 from .extract   import router as extract_router
 from .audit     import router as audit_router
 from .export    import router as export_router
+from .settings  import router as settings_router
 
 # ---------------------------------------------------------------------------
 # App
@@ -44,6 +45,7 @@ app.include_router(proj_router)
 app.include_router(extract_router)
 app.include_router(audit_router)
 app.include_router(export_router)
+app.include_router(settings_router)
 
 # RAG endpoints (query + rebuild)
 @app.post("/api/rag/rebuild/{project_id}")
