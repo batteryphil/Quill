@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Quill — AI-first local book writing environment">
+  <title>Quill</title>
+  <link rel="stylesheet" href="/css/main.css">
+
+  <!--
+    Zero-build ProseMirror via ES Module import map.
+    esm.sh resolves dependencies automatically — no npm, no bundler.
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "prosemirror-state":        "https://esm.sh/prosemirror-state@1.4.3",
+      "prosemirror-view":         "https://esm.sh/prosemirror-view@1.33.8",
+      "prosemirror-model":        "https://esm.sh/prosemirror-model@1.21.3",
+      "prosemirror-schema-basic": "https://esm.sh/prosemirror-schema-basic@1.2.3",
+      "prosemirror-history":      "https://esm.sh/prosemirror-history@1.4.1",
+      "prosemirror-keymap":       "https://esm.sh/prosemirror-keymap@1.2.2",
+      "prosemirror-commands":     "https://esm.sh/prosemirror-commands@1.5.2",
+      "prosemirror-transform":    "https://esm.sh/prosemirror-transform@1.9.0"
+    }
+  }
+  </script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════
+     PROJECT PICKER  (shown when no project is open)
+════════════════════════════════════════════════════════ -->
+<div id="project-picker" class="hidden">
+  <h1>Quil<span>l</span></h1>
+  <p style="color:#6e7681;font-size:0.9rem;margin-top:-16px">Your AI writing environment</p>
+  <div class="picker-actions">
+    <div id="project-list"></div>
+    <button id="btn-new-project">+ New project</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     MAIN LAYOUT
+════════════════════════════════════════════════════════ -->
+<div id="main-layout" class="hidden">
+
+  <!-- ── Left Sidebar (Binder) ─────────────────────────── -->
+  <nav id="sidebar">
+    <div id="sidebar-header">
+      <div>
+        <div class="logo">Quil<span>l</span></div>
+        <div id="project-title">Untitled</div>
+      </div>
+      <button id="btn-export"
+              class="sidebar-export-btn"
+              title="Export manuscript">
+        ↓
+      </button>
+    </div>
+
+    <div id="binder-tree" role="tree" aria-label="Project structure"></div>
+
+    <div id="sidebar-footer">
+      <div id="progress-section">
+        <div class="progress-labels">
+          <span id="word-count">0 words</span>
+          <span id="progress-label" class="progress-label">0 / 80,000</span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-bar-fill" class="progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+      <span id="autosave-status" title="Auto-saves every 2 seconds">●</span>
+    </div>
+  </nav>
+
+  <!-- ── Editor area ───────────────────────────────────── -->
+  <div id="editor-area">
+
+    <!-- Scene header bar -->
+    <div id="scene-header">
+      <span id="scene-title-display">Select a scene</span>
+    </div>
+
+    <!-- Scroll container + ProseMirror mount -->
+    <div id="editor-scroll">
+      <div id="editor"
+           role="textbox"
+           aria-multiline="true"
+           aria-label="Scene editor"
+           spellcheck="true">
+      </div>
+    </div>
+
+    <!-- Ghost text hint (shows when ghost is active) -->
+    <div id="ghost-hint" class="ghost-hint">
+      <kbd>Tab</kbd> accept &nbsp;·&nbsp; <kbd>Esc</kbd> dismiss &nbsp;·&nbsp; <kbd>Alt+]</kbd> retry
+    </div>
+
+    <!-- Brainstorm slide-up panel -->
+    <div id="brainstorm-panel" class="hidden" role="complementary" aria-label="Brainstorm ideas">
+      <div class="brainstorm-header">
+        <span>💡 What happens next?</span>
+        <input id="brainstorm-question" type="text"
+               placeholder="e.g. How does the mystery deepen?"
+               class="brainstorm-question-input">
+        <button id="brainstorm-regenerate" class="brainstorm-regen-btn" title="Regenerate">↺</button>
+        <button id="brainstorm-close" class="brainstorm-close-btn">✕</button>
+      </div>
+      <div id="brainstorm-list" class="brainstorm-list"></div>
+    </div>
+
+    <!-- ── AI Toolbar ─────────────────────────────────── -->
+    <div id="toolbar" role="toolbar" aria-label="AI writing tools">
+
+      <button id="btn-continue"
+              class="toolbar-btn toolbar-btn--primary"
+              title="Continue from cursor (Ctrl+Enter)">
+        ▶ Continue
+      </button>
+
+      <button id="btn-self-write"
+              class="toolbar-btn toolbar-btn--ghost"
+              title="Write this scene from a brief">
+        ✍ Self-Write
+      </button>
+
+      <div class="toolbar-divider"></div>
+
+      <button id="btn-rephrase"
+              class="toolbar-btn toolbar-btn--ghost"
+              title="Rephrase selected text">
+        ↩ Rephrase
+      </button>
+
+      <button id="btn-describe"
+              class="toolbar-btn toolbar-btn--ghost"
+              title="Expand selected text with sensory detail (Ctrl+D)">
+        ✨ Describe
+      </button>
+
+      <div class="toolbar-divider"></div>
+
+      <button id="btn-brainstorm"
+              class="toolbar-btn toolbar-btn--ghost"
+              title="Brainstorm what happens next">
+        💡 Ideas
+      </button>
+
+      <div class="toolbar-divider"></div>
+
+      <button id="btn-stop"
+              class="toolbar-btn toolbar-btn--stop"
+              title="Stop generation">
+        ■ Stop
+      </button>
+
+      <span id="ai-status" class="ai-status--info"></span>
+    </div>
+
+  </div><!-- /editor-area -->
+
+  <!-- ── Right Sidebar (Story Bible + Consistency) ──────── -->
+  <aside id="right-sidebar">
+
+    <!-- Tab bar -->
+    <div id="right-tabs" role="tablist">
+      <button class="right-tab active" id="tab-bible"
+              role="tab" aria-selected="true" aria-controls="panel-bible">
+        📚 Bible
+      </button>
+      <button class="right-tab" id="tab-consistency"
+              role="tab" aria-selected="false" aria-controls="panel-consistency">
+        ⚠️ Check
+        <span id="consistency-badge" class="hidden">0</span>
+      </button>
+    </div>
+
+    <!-- Bible panel -->
+    <div id="panel-bible" role="tabpanel" class="right-panel">
+
+      <div class="right-panel-section">
+        <div class="right-section-header">Characters</div>
+        <div id="bible-characters"><div class="bible-empty">Loading…</div></div>
+      </div>
+
+      <div class="right-panel-section">
+        <div class="right-section-header">World Facts</div>
+        <div id="bible-world-rules"><div class="bible-empty">Loading…</div></div>
+      </div>
+
+    </div>
+
+    <!-- Consistency panel -->
+    <div id="panel-consistency" role="tabpanel" class="right-panel hidden">
+
+      <div class="right-panel-section">
+        <div class="right-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          Contradictions
+          <button id="btn-run-audit" class="btn-run-audit">▶ Run audit</button>
+        </div>
+        <div id="consistency-list"><div class="bible-empty">Select a scene to begin.</div></div>
+      </div>
+
+    </div>
+
+  </aside>
+
+</div><!-- /main-layout -->
+
+<!-- ═══════════════════════════════════════════════════════
+     SELF-WRITE MODAL
+════════════════════════════════════════════════════════ -->
+<div id="self-write-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="sw-modal-title">
+  <div class="modal-card">
+    <h2 id="sw-modal-title">✍ Write This Scene</h2>
+
+    <div class="form-field">
+      <label for="sw-who">Who is in this scene?</label>
+      <input id="sw-who" type="text" placeholder="e.g. Mara, Tomas" autocomplete="off">
+    </div>
+
+    <div class="form-field">
+      <label for="sw-where">Where does it happen?</label>
+      <input id="sw-where" type="text" placeholder="e.g. The abandoned lighthouse" autocomplete="off">
+    </div>
+
+    <div class="form-field">
+      <label for="sw-what">What must happen?</label>
+      <textarea id="sw-what" placeholder="e.g. Mara discovers the hidden letters and confronts Tomas"></textarea>
+    </div>
+
+    <div class="form-field">
+      <label for="sw-tone">Tone</label>
+      <input id="sw-tone" type="text" placeholder="e.g. tense, lyrical, melancholy" autocomplete="off">
+    </div>
+
+    <div class="modal-actions">
+      <button id="self-write-cancel" class="btn-cancel">Cancel</button>
+      <button id="self-write-submit" class="btn-submit">✍ Write scene</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Ghost text Tab/Esc hint visibility logic ───────────── -->
+<script type="module">
+  import { ghostKey } from "/js/ghost.js";
+
+  // We need the ProseMirror view reference from editor.js
+  // Import it and watch the ghost plugin state
+  import { view } from "/js/editor.js";
+
+  const hint = document.getElementById("ghost-hint");
+
+  // Poll ghost state to show/hide hint (lightweight, ~10ms per check)
+  let lastActive = false;
+  setInterval(() => {
+    const ghost = ghostKey.getState(view.state);
+    if (ghost.active !== lastActive) {
+      lastActive = ghost.active;
+      hint.classList.toggle("visible", ghost.active && !!ghost.suggestion);
+    }
+  }, 100);
+</script>
+
+<!-- ── Binder (loads project list + handles navigation) ─── -->
+<script type="module" src="/js/binder.js"></script>
+
+<!-- ── Keyboard shortcut: Ctrl+Enter → Continue ──────────── -->
+<script type="module">
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("btn-continue")?.click();
+    }
+  });
+</script>
+
+<!-- ── Brainstorm panel: regenerate + close ───────────────── -->
+<script type="module">
+  import { run as runBrainstorm, closeBrainstorm } from "/js/brainstorm.js";
+  import { view }                                   from "/js/editor.js";
+
+  document.getElementById("brainstorm-regenerate")?.addEventListener("click", async () => {
+    // Re-run with updated question
+    await runBrainstorm(view, null, null, "fiction");
+  });
+
+  document.getElementById("brainstorm-close")?.addEventListener("click", closeBrainstorm);
+</script>
+
+<!-- ── Right sidebar tab switching ───────────────────────── -->
+<script type="module">
+  const tabs   = document.querySelectorAll(".right-tab");
+  const panels = document.querySelectorAll(".right-panel");
+
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      const target = tab.getAttribute("aria-controls");
+
+      tabs.forEach(t => { t.classList.remove("active"); t.setAttribute("aria-selected", "false"); });
+      panels.forEach(p => p.classList.add("hidden"));
+
+      tab.classList.add("active");
+      tab.setAttribute("aria-selected", "true");
+      document.getElementById(target)?.classList.remove("hidden");
+    });
+  });
+</script>
+
+<!-- ── Export modal trigger ─────────────────────────────────── -->
+<script type="module">
+  import { openExportModal } from "/js/export.js";
+
+  document.getElementById("btn-export")?.addEventListener("click", () => {
+    const title = document.getElementById("project-title")?.textContent?.trim() || "Manuscript";
+    // We need the project id — stored in the binder's current project state
+    // Access via a DOM attribute set by binder.js on load
+    const projectId = document.body.dataset.projectId;
+    if (!projectId) {
+      alert("Please open a project first.");
+      return;
+    }
+    openExportModal(projectId, title);
+  });
+</script>
+
+</body>
+</html>

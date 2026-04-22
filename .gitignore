@@ -1,0 +1,60 @@
+# ─── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Virtual environments ────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Quill runtime data (local-only, not for repo) ──────────────────────────
+# User project files (stories)
+~/.quill/
+data/
+
+# ChromaDB vector store (ephemeral — rebuilt on start)
+**/state/chroma/
+
+# Snapshots (version history, can be large)
+# Uncomment below if you prefer to exclude them:
+# **/scenes/snapshots/
+
+# ─── OS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ─── Editor ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.env
+.env.*
+
+# ─── Node (if frontend tooling added later) ──────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Test artefacts ──────────────────────────────────────────────────────────
+.pytest_cache/
+*.log
+
+# ─── Pandoc temp files ───────────────────────────────────────────────────────
+*.aux
+*.out
+*.toc
