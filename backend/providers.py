@@ -602,13 +602,13 @@ class GeminiProvider(BaseProvider):
 #: Human-readable metadata for the settings UI.
 PROVIDER_REGISTRY: dict[str, dict] = {
     "llama_server": {
-        "label":       "llama-server (BitNet / llama.cpp)",
+        "label":       "llama-server (Qwen 3B / llama.cpp)",
         "type":        "openai_compat",
         "default_url": "http://127.0.0.1:8081",
         "needs_key":   False,
         "needs_model": True,
         "local":       True,
-        "description": "Local llama.cpp server. Recommended: BitNet 2B.",
+        "description": "Local llama.cpp server. Default: Qwen 2.5 3B Instruct.",
     },
     "lm_studio": {
         "label":       "LM Studio",
@@ -776,8 +776,8 @@ def _build_from_config() -> BaseProvider:
         except Exception as exc:
             print(f"[Quill] Config load error: {exc} — using defaults")
 
-    # Default: llama-server on 8081
+    # Default: llama-server on 8081 with Qwen 3B
     return OpenAICompatProvider(
         base_url=config.LLAMA_SERVER_URL,
-        model="quill",
+        model="qwen2.5-coder-3b-instruct-q4_k_m.gguf",
     )
