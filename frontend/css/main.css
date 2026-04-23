@@ -1317,9 +1317,11 @@ body.focus-mode #right-sidebar { display: none !important; }
 
 .sidebar-header-btns {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
+  flex-wrap: wrap;
   flex-shrink: 0;
+  justify-content: flex-end;
 }
 
 .sidebar-icon-btn {

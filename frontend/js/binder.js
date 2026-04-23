@@ -301,6 +301,13 @@ document.getElementById("btn-new-project")?.addEventListener("click", showNewPro
 // Also wire the in-editor sidebar + button
 document.getElementById("btn-new-project-sidebar")?.addEventListener("click", showNewProjectModal);
 
+// Wire the folder/open-project button to show the project picker
+document.getElementById("btn-open-project")?.addEventListener("click", () => {
+  renderProjectList();
+  document.getElementById("main-layout").classList.add("hidden");
+  document.getElementById("project-picker").classList.remove("hidden");
+});
+
 // Expose binder refresh so bookwriter can trigger it after completion
 window.__binderRefresh = () => {
   renderProjectList();
