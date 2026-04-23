@@ -153,16 +153,17 @@ _OUTLINE_SYSTEM = (
 async def _generate_outline(config: dict) -> dict:
     """
     Call the active LLM provider to generate a structured book outline.
-
-    Returns a dict with keys: title, acts (list of act dicts).
-    Falls back gracefully if JSON parsing fails.
+    Uses the Open/Close workflow: 
+    1. Generates 3 concepts.
+    2. Evaluates and expands the best concept into JSON.
     """
     n_chaps  = config["num_chapters"]
     spc      = config["scenes_per_chapter"]
     n_acts   = 3
     per_act  = n_chaps // n_acts
 
-    user_msg = (
+    # --- Phase 1: OPEN ---
+    open_msg = (
         f"Genre: {config['genre']}\n"
         f"Premise: {config['premise']}\n"
         f"Protagonist: {config.get('protagonist') or 'Not specified'}\n"
@@ -172,20 +173,42 @@ async def _generate_outline(config: dict) -> dict:
         f"POV: {config.get('pov', 'third person limited')}\n"
         f"Structure: {n_acts} acts, {n_chaps} chapters, {spc} scenes per chapter.\n"
         f"Chapters per act: roughly {per_act}.\n\n"
+        "Generate 3 completely different structural concepts for this outline based on the premise. Do NOT use JSON. "
+        "Just describe 3 different ways the plot could unfold across the acts. "
+        "Number them Concept 1, Concept 2, and Concept 3."
+    )
+
+    provider = get_active_provider()
+    open_resp = ""
+    
+    async for token in provider.stream(
+        messages=[
+            {"role": "system", "content": "You are an expert novelist brainstorming story arcs. Be highly creative."},
+            {"role": "user", "content": open_msg}
+        ],
+        max_tokens=1500,
+        temperature=0.8,
+        stop=[],
+    ):
+        open_resp += token
+
+    # --- Phase 2: CLOSE ---
+    close_msg = (
+        "Here are 3 structural concepts for the book:\n\n"
+        f"{open_resp}\n\n"
+        "Evaluate these 3 paths and select the one with the strongest emotional arc, richest conflict, and best pacing. "
+        "Discard the other two. "
+        "Map the selected path into a complete, highly detailed outline.\n\n"
         "Generate the complete outline JSON now:"
     )
 
-    messages = [
-        {"role": "system",  "content": _OUTLINE_SYSTEM},
-        {"role": "user",    "content": user_msg},
-    ]
-
-    provider = get_active_provider()
     full_text = ""
-
     # 40 scenes × ~50 words/scene in JSON overhead ≈ 3200 tokens needed
     async for token in provider.stream(
-        messages=messages,
+        messages=[
+            {"role": "system", "content": _OUTLINE_SYSTEM},
+            {"role": "user", "content": close_msg}
+        ],
         max_tokens=3200,
         temperature=0.5,
         stop=[],
@@ -323,22 +346,45 @@ async def _write_scene(
     if prev_ending:
         context_parts.append(f"PREVIOUS SCENE ENDED:\n{prev_ending}")
 
-    user_msg = "\n\n".join(context_parts) + (
+    provider = get_active_provider()
+
+    # --- Phase 1: OPEN ---
+    open_msg = "\n\n".join(context_parts) + (
         f"\n\nChapter: {chapter_title}\n"
         f"Scene: {scene_beat}\n\n"
+        "Generate 3 distinct narrative approaches to execute this scene beat (e.g., action-heavy vs introspective vs dialogue-driven). "
+        "Do NOT write the full scene yet. Just outline 3 different ways to approach it stylistically and narratively. "
+        "Number them Approach 1, Approach 2, and Approach 3."
+    )
+
+    open_sys = "You are an expert novelist experimenting with narrative choices. Be creative."
+    open_resp = ""
+    async for token in provider.stream(
+        messages=[{"role": "system", "content": open_sys}, {"role": "user", "content": open_msg}],
+        max_tokens=1000,
+        temperature=0.8,
+        stop=[],
+    ):
+        open_resp += token
+
+    # --- Phase 2: CLOSE ---
+    close_msg = "\n\n".join(context_parts) + (
+        f"\n\nChapter: {chapter_title}\n"
+        f"Scene: {scene_beat}\n\n"
+        "Here are 3 possible narrative approaches to execute this scene:\n\n"
+        f"{open_resp}\n\n"
+        "Evaluate them and select the absolute best approach with the strongest emotional impact and distinctive voice. "
+        "Now, write the complete scene using ONLY the selected approach. "
         "Write the scene now:"
     )
 
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user",   "content": user_msg},
-    ]
-
     max_tokens = min(int(words_per_scene * 1.5), cfg.SELF_WRITE_MAX_TOKENS)
-    provider   = get_active_provider()
 
     async for token in provider.stream(
-        messages=messages,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": close_msg},
+        ],
         max_tokens=max_tokens,
         temperature=0.72,
         stop=["---", "***", "# ", "## "],

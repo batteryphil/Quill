@@ -90,6 +90,7 @@ export function createGhostPlugin() {
     );
 
     abortController = new AbortController();
+    const needsSpace = before.length > 0 && !/\\s$/.test(before);
 
     try {
       const resp = await fetch("/api/generate/complete", {
@@ -114,8 +115,12 @@ export function createGhostPlugin() {
           const payload = line.slice(6).trim();
           if (payload === "[DONE]") break;
           try {
-            const token = JSON.parse(payload);
+            let token = JSON.parse(payload);
             if (typeof token === "string" && token.length > 0) {
+              const currentGhostObj = ghostKey.getState(view.state);
+              if (needsSpace && currentGhostObj.suggestion.length === 0 && !token.startsWith(' ') && !token.startsWith('\\n')) {
+                  token = ' ' + token;
+              }
               // Append token to ghost suggestion via plugin meta
               view.dispatch(
                 view.state.tr.setMeta(ghostKey, { type: "ADD_TOKEN", token })

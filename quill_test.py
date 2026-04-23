@@ -323,6 +323,7 @@ def main():
     try:
         # Check if chromadb + sentence-transformers are available
         import importlib
+        import importlib.util
         chromadb_ok = importlib.util.find_spec("chromadb") is not None
         st_ok       = importlib.util.find_spec("sentence_transformers") is not None
         ok(f"chromadb available: {chromadb_ok}")

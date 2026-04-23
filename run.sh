@@ -11,6 +11,10 @@ echo "║   AI-first book writing env      ║"
 echo "╚══════════════════════════════════╝"
 echo ""
 
+if [ -d ".venv" ]; then
+  source .venv/bin/activate
+fi
+
 # ── Install Python deps if needed ──────────────────────────────────────────
 if ! python3 -c "import fastapi" &>/dev/null; then
   echo "→ Installing backend dependencies..."
