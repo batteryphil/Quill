@@ -37,7 +37,7 @@
   --ghost-cursor:     #7c3aed;
 
   /* Layout */
-  --sidebar-width:    260px;
+  --sidebar-width:    300px;
   --toolbar-height:   54px;
   --status-height:    28px;
 }
@@ -69,16 +69,30 @@ body {
   border-right: 1px solid var(--sidebar-border);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   transition: width 0.2s ease;
 }
 
 #sidebar-header {
-  padding: 18px 16px 12px;
+  padding: 14px 12px 8px;
   border-bottom: 1px solid var(--sidebar-border);
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-header-top {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+}
+
+.sidebar-btn-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
 .logo {
