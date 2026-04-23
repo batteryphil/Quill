@@ -20,6 +20,7 @@ Endpoints
 
 import asyncio
 import json
+import yaml
 import re
 import uuid
 from datetime import datetime, timezone
@@ -142,11 +143,14 @@ _JOBS: dict[str, BookJob] = {}
 
 _OUTLINE_SYSTEM = (
     "You are an expert novelist creating a detailed book outline. "
-    "Output ONLY a valid JSON object — absolutely no other text, no markdown, no backticks.\n\n"
+    "Output ONLY valid Markdown format — absolutely no JSON, no backticks, no other text.\n\n"
     "Required format:\n"
-    '{"title":"...", "acts":['
-    '{"name":"Act 1: Setup",'
-    '"chapters":[{"title":"...","scenes":["One-sentence scene beat.","...","..."]}]}]}'
+    "# Act 1: Setup\n"
+    "## Chapter 1\n"
+    "- Scene beat description here.\n"
+    "- Another scene beat.\n"
+    "## Chapter 2\n"
+    "- Scene beat description here.\n"
 )
 
 
@@ -173,7 +177,7 @@ async def _generate_outline(config: dict) -> dict:
         f"POV: {config.get('pov', 'third person limited')}\n"
         f"Structure: {n_acts} acts, {n_chaps} chapters, {spc} scenes per chapter.\n"
         f"Chapters per act: roughly {per_act}.\n\n"
-        "Generate 3 completely different structural concepts for this outline based on the premise. Do NOT use JSON. "
+        "Generate 3 completely different structural concepts for this outline based on the premise.\n"
         "Just describe 3 different ways the plot could unfold across the acts. "
         "Number them Concept 1, Concept 2, and Concept 3."
     )
@@ -199,7 +203,7 @@ async def _generate_outline(config: dict) -> dict:
         "Evaluate these 3 paths and select the one with the strongest emotional arc, richest conflict, and best pacing. "
         "Discard the other two. "
         "Map the selected path into a complete, highly detailed outline.\n\n"
-        "Generate the complete outline JSON now:"
+        "Generate the complete outline in exactly the Markdown format requested by the system prompt. Do not output anything else."
     )
 
     full_text = ""
@@ -220,30 +224,48 @@ async def _generate_outline(config: dict) -> dict:
 
 def _parse_outline(text: str, config: dict) -> dict:
     """
-    Try JSON parsing; fall back to line-by-line heuristic parsing.
-
-    Args:
-        text:   LLM output (hopefully JSON).
-        config: Original BookConfig dict.
-
-    Returns:
-        Normalised outline dict.
+    Parse a Markdown-style outline.
+    Expected format:
+    # Act...
+    ## Chapter...
+    - Scene...
     """
-    # Try JSON first
-    try:
-        # Strip markdown fences if present
-        clean = re.sub(r"```(?:json)?|```", "", text).strip()
-        # Find first { to last }
-        start = clean.find("{")
-        end   = clean.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(clean[start:end])
-            if "acts" in data and data["acts"]:
-                return data
-    except (json.JSONDecodeError, KeyError):
-        pass
+    lines = text.strip().split("\n")
+    acts = []
+    current_act = None
+    current_chap = None
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        if line.startswith("# "):
+            if current_chap and current_act:
+                current_act["chapters"].append(current_chap)
+            if current_act:
+                acts.append(current_act)
+            current_act = {"name": line[2:].strip(), "chapters": []}
+            current_chap = None
+        elif line.startswith("## "):
+            if current_chap and current_act:
+                current_act["chapters"].append(current_chap)
+            current_chap = {"title": line[3:].strip(), "scenes": []}
+        elif line.startswith("- ") or line.startswith("* "):
+            if current_chap:
+                current_chap["scenes"].append(line[2:].strip())
+                
+    if current_chap and current_act:
+        current_act["chapters"].append(current_chap)
+    if current_act:
+        acts.append(current_act)
 
-    # Fallback: synthesise a minimal outline from the config
+    if acts:
+        return {"title": config.get("premise", "Untitled")[:50] + "...", "acts": acts}
+
+    # Fallback if markdown parsing completely failed
+    print("[Quill] Outline Parse Error: Could not extract markdown outline structure.")
+    return _synthesise_outline(config)
     return _synthesise_outline(config)
 
 
