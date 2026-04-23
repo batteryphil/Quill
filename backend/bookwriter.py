@@ -231,7 +231,9 @@ async def _generate_outline(config: dict) -> dict:
     ):
         full_text += token
 
-    return _parse_outline(full_text, config)
+    outline = _parse_outline(full_text, config)
+    outline  = await _validate_and_repair_outline(outline, config, provider)
+    return outline
 
 
 def _parse_outline(text: str, config: dict) -> dict:
@@ -323,7 +325,122 @@ def _parse_outline(text: str, config: dict) -> dict:
     # Fallback if markdown parsing completely failed
     print("[Quill] Outline Parse Error: Could not extract markdown outline structure.")
     return _synthesise_outline(config)
-    return _synthesise_outline(config)
+
+
+def _beats_jaccard(a: str, b: str) -> float:
+    """
+    Compute Jaccard word-overlap between two beat strings.
+
+    Args:
+        a: First beat string.
+        b: Second beat string.
+
+    Returns:
+        Float similarity in [0, 1].
+    """
+    stop = {"the", "and", "a", "an", "to", "in", "of", "he", "she", "they",
+            "his", "her", "its", "at", "by", "for", "with", "from", "into"}
+    wa = {w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", a) if w.lower() not in stop}
+    wb = {w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", b) if w.lower() not in stop}
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+async def _validate_and_repair_outline(outline: dict, config: dict, provider) -> dict:
+    """
+    Validate that every scene beat in the outline is unique and causally distinct.
+
+    Scans all beats across all acts/chapters for:
+      - Exact duplicates
+      - Near-duplicates (Jaccard > 0.65)
+
+    Duplicate beats are regenerated individually by calling the LLM with the
+    full list of already-accepted beats as context, ensuring no repeats.
+
+    Args:
+        outline:  Parsed outline dict from _parse_outline.
+        config:   BookConfig dict for protagonist/setting/premise context.
+        provider: Active LLM provider.
+
+    Returns:
+        Repaired outline dict with all duplicate beats replaced.
+    """
+    protagonist = config.get("protagonist", "The protagonist")
+    premise     = config.get("premise", "")[:300]
+    genre       = config.get("genre", "fiction")
+
+    # Collect all beats in order with their location
+    all_beats: list[tuple[int, int, int, str]] = []  # (act_i, chap_i, scene_i, beat)
+    for ai, act in enumerate(outline.get("acts", [])):
+        for ci, chap in enumerate(act.get("chapters", [])):
+            for si, beat in enumerate(chap.get("scenes", [])):
+                all_beats.append((ai, ci, si, beat))
+
+    accepted:  list[str] = []
+    changes    = 0
+
+    for ai, ci, si, beat in all_beats:
+        # Check exact duplicate
+        is_exact = beat in accepted
+        # Check near-duplicate against last 10 accepted beats
+        is_near  = any(
+            _beats_jaccard(beat, prev) >= 0.65
+            for prev in accepted[-10:]
+        ) if not is_exact else False
+
+        if is_exact or is_near:
+            # Regenerate this beat via LLM
+            chap_title = outline["acts"][ai]["chapters"][ci].get("title", "")
+            act_name   = outline["acts"][ai].get("name", "")
+            context    = "\n".join(f"- {b}" for b in accepted[-8:])
+
+            prompt = (
+                f"Genre: {genre}\nPremise: {premise}\nProtagonist: {protagonist}\n"
+                f"Current act: {act_name}\nCurrent chapter: {chap_title}\n\n"
+                f"The following scene beats have already been written:\n{context}\n\n"
+                f"The next beat was a duplicate: '{beat}'\n"
+                "Write ONE new scene beat that:\n"
+                "1. Is completely different from all beats listed above\n"
+                "2. Advances the story forward from the last beat\n"
+                "3. Is a specific action-verb sentence describing what the protagonist discovers, decides, or confronts\n"
+                "4. Does NOT repeat any location, event, or character action already used\n"
+                "Return ONLY the single scene beat sentence. No labels, no numbering."
+            )
+
+            new_beat = ""
+            async for token in provider.stream(
+                messages=[
+                    {"role": "system",
+                     "content": "You are a story editor. Generate ONE specific, unique scene beat."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=120,
+                temperature=0.85,
+                stop=["\n", ".", "!", "?"],
+            ):
+                new_beat += token
+
+            # Clean up and ensure it ends with a period
+            new_beat = new_beat.strip().rstrip(".!?") + "."
+            new_beat = re.sub(r"^[-\d\.\*]+\s*", "", new_beat)  # strip any numbering
+
+            # Apply to outline
+            outline["acts"][ai]["chapters"][ci]["scenes"][si] = new_beat
+            accepted.append(new_beat)
+            changes += 1
+            print(f"[Quill] Outline repair: replaced duplicate beat in {act_name}/{chap_title} "
+                  f"(sim={'exact' if is_exact else 'near'})")
+        else:
+            accepted.append(beat)
+
+    if changes:
+        print(f"[Quill] Outline validated: {changes} duplicate beat(s) repaired.")
+    else:
+        print("[Quill] Outline validated: all beats are unique. ✓")
+
+    return outline
+
 
 
 def _synthesise_outline(config: dict) -> dict:

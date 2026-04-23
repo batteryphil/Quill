@@ -248,6 +248,47 @@ def _detect_character_drift(scenes: list[dict], protagonist: str) -> list[dict]:
     }]
 
 
+def _detect_cross_scene_repetition(scenes: list[dict]) -> list[dict]:
+    """
+    Find scenes whose prose content is highly similar to another scene.
+
+    Uses Jaccard content-word overlap across scene pairs. Flags the LATER
+    scene as a duplicate, since Fix All will regenerate it with a fresh beat.
+    Threshold: 65% — high enough to avoid false positives on shared setting.
+
+    This catches the core 'identical chapters' problem (same beat, same prose
+    generated across multiple chapters) that within-scene dedup misses.
+
+    Args:
+        scenes: All scene dicts for the project.
+
+    Returns:
+        List of issue dicts with fix_type 'regenerate_scene'.
+    """
+    issues = []
+    # Only compare scenes with enough prose to matter
+    substantive = [s for s in scenes if s["word_count"] > 60]
+
+    for i in range(len(substantive)):
+        for j in range(i + 1, len(substantive)):
+            sa, sb = substantive[i], substantive[j]
+            sim = _jaccard(sa["content"], sb["content"])
+            if sim >= 0.65:
+                issues.append({
+                    "type":        "cross_scene_repetition",
+                    "scene_id":    sb["id"],
+                    "scene_title": sb["title"],
+                    "description": (
+                        f"Scene '{sb['id']}' is {sim*100:.0f}% similar to '{sa['id']}' "
+                        f"— likely generated from a duplicate outline beat."
+                    ),
+                    "fix_type":    "regenerate_scene",
+                    "detail":      sb["content"][:120] + "\u2026",
+                })
+                break  # Only flag each scene once (against its first duplicate)
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Fix appliers
 # ---------------------------------------------------------------------------
@@ -385,6 +426,7 @@ async def review_project(project_id: str, req: ReviewRequest) -> dict:
                     break
 
     issues += _detect_character_drift(scenes, protagonist)
+    issues += _detect_cross_scene_repetition(scenes)
 
     summary = Counter(i["type"] for i in issues)
     return {
