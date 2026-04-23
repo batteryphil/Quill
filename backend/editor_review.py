@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from . import config
 from .providers import get_active_provider
+from .bookwriter import _write_scene as _bw_write_scene
 
 router = APIRouter(prefix="/api", tags=["review"])
 
@@ -295,7 +296,8 @@ async def review_project(project_id: str, req: ReviewRequest) -> dict:
 @router.post("/projects/{project_id}/fix")
 async def fix_project(project_id: str, req: FixRequest) -> dict:
     """
-    Apply a batch of auto-fixes identified by the review endpoint.
+    Apply all auto-fixes: strip labels, remove duplicates, normalize names,
+    and regenerate empty scenes via the AI writer.
 
     Backs up scenes before modifying. Returns count of fixes applied.
 
@@ -331,14 +333,16 @@ async def fix_project(project_id: str, req: FixRequest) -> dict:
             name_canonical = data.get("canonical", "")
             name_variants  = data.get("variants", [])
 
-    # --- Per-scene fixes ---
+    # --- Load project config for regeneration ---
+    project_config = _load_project_config(proj)
+
+    # --- Build full scene ID set (label/dupe fixes + name norm) ---
     all_scene_ids = set(by_scene.keys())
     if name_canonical:
-        # Apply name normalization to ALL scenes
         for md in sorted(scene_dir.glob("*.md")):
             all_scene_ids.add(md.stem)
 
-    for sid in all_scene_ids:
+    for sid in sorted(all_scene_ids):
         md = scene_dir / f"{sid}.md"
         if not md.exists():
             skipped += 1
@@ -371,8 +375,174 @@ async def fix_project(project_id: str, req: FixRequest) -> dict:
         else:
             results.append({"scene_id": sid, "ops": [], "status": "unchanged"})
 
+    # --- Regenerate empty scenes ---
+    regen_ids = [
+        issue["scene_id"]
+        for issue in req.fixes
+        if issue.get("fix_type") == "regenerate_scene"
+    ]
+
+    for sid in regen_ids:
+        md = scene_dir / f"{sid}.md"
+        result = await _regenerate_scene(proj, sid, md, project_config)
+        results.append(result)
+        if result["status"] == "regenerated":
+            applied += 1
+        else:
+            skipped += 1
+
     return {
         "applied": applied,
         "skipped": skipped,
         "results": results,
     }
+
+
+# ---------------------------------------------------------------------------
+# Scene regeneration helper
+# ---------------------------------------------------------------------------
+
+
+def _load_project_config(proj: Path) -> dict:
+    """
+    Build a config dict for _write_scene from the project's style_guide.md
+    and project.json.
+
+    Args:
+        proj: Path to the project root directory.
+
+    Returns:
+        Dict compatible with BookConfig / _write_scene expectations.
+    """
+    cfg: dict = {
+        "genre":      "fiction",
+        "tone":       "balanced",
+        "pov":        "third person limited",
+        "premise":    "",
+        "setting":    "",
+        "protagonist": "",
+        "antagonist":  "",
+    }
+
+    # Load project.json for basic metadata
+    proj_json = proj / "project.json"
+    if proj_json.exists():
+        meta = json.loads(proj_json.read_text())
+        cfg["genre"] = meta.get("genre", cfg["genre"])
+        cfg["title"] = meta.get("title", "")
+
+    # Parse style_guide.md for richer context
+    sg = proj / "style_guide.md"
+    if sg.exists():
+        text = sg.read_text(encoding="utf-8")
+        for section, key in [
+            ("## Genre",       "genre"),
+            ("## Tone",        "tone"),
+            ("## Point of View", "pov"),
+            ("## Setting",     "setting"),
+            ("## Premise",     "premise"),
+            ("## Protagonist", "protagonist"),
+            ("## Antagonist",  "antagonist"),
+        ]:
+            if section in text:
+                start = text.index(section) + len(section)
+                end = text.find("\n##", start)
+                value = text[start:end if end != -1 else None].strip()
+                if value:
+                    cfg[key] = value
+
+    # Load characters.json for protagonist name
+    chars_path = proj / "state" / "characters.json"
+    if chars_path.exists():
+        chars = json.loads(chars_path.read_text())
+        for name, data in chars.items():
+            if data.get("role") == "protagonist" and not cfg["protagonist"]:
+                cfg["protagonist"] = data.get("description", name)
+            if data.get("role") == "antagonist" and not cfg["antagonist"]:
+                cfg["antagonist"] = data.get("description", name)
+
+    return cfg
+
+
+def _get_scene_context(proj: Path, sid: str) -> tuple[str, str]:
+    """
+    Extract chapter title and scene beat for a given scene ID from structure.json.
+
+    Args:
+        proj: Project root path.
+        sid:  Scene ID like 'a1_c02_s003'.
+
+    Returns:
+        Tuple of (chapter_title, scene_beat).
+    """
+    struct_path = proj / "structure.json"
+    if not struct_path.exists():
+        return "Unknown Chapter", "Continue the narrative."
+
+    structure = json.loads(struct_path.read_text())
+    for act in structure.get("acts", []):
+        for chap in act.get("chapters", []):
+            for s in chap.get("scenes", []):
+                if s["id"] == sid:
+                    title = chap.get("title", "Unknown Chapter")
+                    beat  = s.get("title", "Continue the narrative.")
+                    return title, beat
+
+    return "Unknown Chapter", "Continue the narrative."
+
+
+async def _regenerate_scene(
+    proj:           Path,
+    sid:            str,
+    md:             Path,
+    project_config: dict,
+) -> dict:
+    """
+    Regenerate a single empty scene using the book writer pipeline.
+
+    Args:
+        proj:           Project root path.
+        sid:            Scene ID string.
+        md:             Path to the scene .md file.
+        project_config: Config dict from _load_project_config.
+
+    Returns:
+        Result dict with scene_id, status, and ops.
+    """
+    chapter_title, scene_beat = _get_scene_context(proj, sid)
+
+    # Find previous scene content for continuity
+    prev_ending = ""
+    scene_dir = proj / "scenes"
+    all_scenes = sorted(scene_dir.glob("*.md"))
+    for i, sf in enumerate(all_scenes):
+        if sf.stem == sid and i > 0:
+            prev_text = all_scenes[i - 1].read_text(encoding="utf-8")
+            words = prev_text.split()
+            prev_ending = " ".join(words[-150:]) if len(words) > 150 else prev_text
+            break
+
+    try:
+        scene_text = ""
+        async for token in _bw_write_scene(
+            config          = project_config,
+            chapter_title   = chapter_title,
+            scene_beat      = scene_beat,
+            prev_ending     = prev_ending,
+            rag_context     = "",
+            words_per_scene = 400,
+            book_title      = project_config.get("title", ""),
+        ):
+            scene_text += token
+
+        if scene_text.strip():
+            # Strip approach labels from regenerated content too
+            scene_text = _strip_labels(scene_text)
+            _backup_scene(md)
+            md.write_text(scene_text.strip(), encoding="utf-8")
+            return {"scene_id": sid, "ops": ["regenerated"], "status": "regenerated"}
+        else:
+            return {"scene_id": sid, "ops": [], "status": "regen_empty"}
+
+    except Exception as e:
+        return {"scene_id": sid, "ops": [], "status": f"regen_error: {e}"}

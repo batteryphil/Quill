@@ -186,23 +186,79 @@ function _buildIssueCard(issue) {
 }
 
 async function _fixAll(projectId, issues, overlay) {
-  const btn = overlay.querySelector("#rv-fix-all");
-  btn.textContent = "Fixing…";
+  const btn       = overlay.querySelector("#rv-fix-all");
+  const summaryEl = overlay.querySelector("#rv-summary");
+  const listEl    = overlay.querySelector("#rv-list");
+
+  btn.textContent = "Applying fixes…";
   btn.disabled = true;
+
+  const regenCount = issues.filter(i => i.fix_type === "regenerate_scene").length;
+  const fixCount   = issues.filter(i => i.fix_type !== "regenerate_scene").length;
+
+  summaryEl.innerHTML = `
+    <span style="color:#a78bfa">⚙️ Stripping labels &amp; normalizing names…</span>`;
 
   await _applyFixes(projectId, issues, "");
 
-  // Mark all cards as fixed
-  overlay.querySelectorAll("[data-issue-id]").forEach(card => {
-    card.style.opacity = ".4";
-    const fixBtn = card.querySelector("button");
-    if (fixBtn) { fixBtn.textContent = "✓ Fixed"; fixBtn.style.color = "#3fb950"; }
-  });
+  if (regenCount > 0) {
+    summaryEl.innerHTML = `
+      <span style="color:#60a5fa">✍️ Regenerating ${regenCount} empty scene${regenCount > 1 ? "s" : ""} via AI… this may take a few minutes.</span>`;
 
-  overlay.querySelector("#rv-summary").innerHTML =
-    `<span style="color:#3fb950">✓ All issues fixed. Reloading scenes…</span>`;
+    // Show live regen cards
+    listEl.innerHTML = `
+      <div style="color:#8b949e;padding:16px 0;font-size:.85rem">
+        <div style="margin-bottom:12px">Generating new prose for ${regenCount} blank scene${regenCount > 1 ? "s" : ""}…</div>
+        <div id="rv-regen-list" style="display:flex;flex-direction:column;gap:8px"></div>
+      </div>`;
 
-  btn.textContent = "✓ Done";
+    const regenList = listEl.querySelector("#rv-regen-list");
+    const regenIssues = issues.filter(i => i.fix_type === "regenerate_scene");
+    for (const issue of regenIssues) {
+      const el = document.createElement("div");
+      el.id = `rv-regen-${issue.scene_id}`;
+      el.style.cssText = "background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px 14px;font-size:.82rem";
+      el.innerHTML = `<span style="color:#60a5fa">⏳</span> <b>${_esc(issue.scene_title.slice(0,60))}${issue.scene_title.length > 60 ? "…" : ""}</b>`;
+      regenList.appendChild(el);
+    }
+  }
+
+  // ── Auto re-evaluate after fixes ──────────────────────────────────────────
+  summaryEl.innerHTML = `<span style="color:#f0c27f">🔍 Re-evaluating story…</span>`;
+
+  try {
+    const resp = await fetch(`/api/projects/${projectId}/review`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ protagonist: "" }),
+    });
+    const data = await resp.json();
+
+    if (!data.issues || data.issues.length === 0) {
+      summaryEl.innerHTML = `<span style="color:#3fb950">✅ All issues resolved! Story is clean across ${data.scene_count} scenes.</span>`;
+      listEl.innerHTML = `<div style="text-align:center;padding:60px 0;color:#3fb950;font-size:1.1rem">
+        🎉 Story is clean — no issues remaining!
+      </div>`;
+    } else {
+      const parts = Object.entries(data.summary)
+        .map(([type, count]) => `<b style="color:#e6edf3">${count}</b> ${type.replace(/_/g," ")}${count > 1 ? "s" : ""}`)
+        .join(", ");
+      summaryEl.innerHTML = `<span style="color:#f0c27f">⚠️ ${data.total} issue${data.total > 1 ? "s" : ""} remaining: ${parts}</span>`;
+
+      listEl.innerHTML = "";
+      for (const issue of data.issues) {
+        listEl.appendChild(_buildIssueCard(issue));
+      }
+
+      // Re-wire Fix All for remaining issues
+      btn.textContent = "✓ Fix Remaining";
+      btn.disabled = false;
+      btn.style.opacity = "1";
+      btn.onclick = () => _fixAll(projectId, data.issues, overlay);
+    }
+  } catch (err) {
+    summaryEl.innerHTML = `<span style="color:#ef4444">Re-evaluation error: ${_esc(err.message)}</span>`;
+  }
 
   if (window.__binderRefresh) window.__binderRefresh();
 }
