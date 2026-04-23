@@ -163,77 +163,162 @@ _OUTLINE_SYSTEM = (
 
 async def _generate_outline(config: dict) -> dict:
     """
-    Call the active LLM provider to generate a structured book outline.
-    Uses the Open/Close workflow: 
-    1. Generates 3 concepts.
-    2. Evaluates and expands the best concept into JSON.
+    Generate a structured book outline using hierarchical generation.
+
+    Small local LLMs cannot maintain coherence across 40+ sequential beats
+    in a single pass — they start looping after ~15. This function solves that
+    by generating in three focused phases:
+
+    Phase 1 — SPINE: Generate 9 major plot turns (3 per act). Short, high-level.
+              This is the story's backbone and never changes.
+
+    Phase 2 — CHAPTERS: Expand each chapter individually with the spine +
+              ALL previously accepted beats as explicit anti-repetition context.
+              Each call generates only 2–3 beats, well within the model's
+              coherence window.
+
+    Phase 3 — VALIDATE: Run _validate_and_repair_outline to catch any
+              near-duplicates that slipped through.
+
+    Args:
+        config: BookConfig dict with genre, premise, protagonist, etc.
+
+    Returns:
+        Validated outline dict with unique, causally chained scene beats.
     """
     n_chaps  = config["num_chapters"]
     spc      = config["scenes_per_chapter"]
     n_acts   = 3
-    per_act  = n_chaps // n_acts
-
-    # --- Phase 1: OPEN ---
-    open_msg = (
-        f"Genre: {config['genre']}\n"
-        f"Premise: {config['premise']}\n"
-        f"Protagonist: {config.get('protagonist') or 'Not specified'}\n"
-        f"Antagonist: {config.get('antagonist') or 'Not specified'}\n"
-        f"Setting: {config.get('setting') or 'Not specified'}\n"
-        f"Tone: {config.get('tone', 'balanced')}\n"
-        f"POV: {config.get('pov', 'third person limited')}\n"
-        f"Structure: {n_acts} acts, {n_chaps} chapters total, {spc} scenes per chapter.\n"
-        f"Chapters per act: roughly {per_act}.\n\n"
-        f"CRITICAL CONSTRAINT: The outline must ultimately contain exactly {n_acts} acts and exactly {n_chaps} chapters overall.\n\n"
-        "Generate 3 completely different structural concepts for this outline based on the premise.\n"
-        "Just describe 3 different ways the plot could unfold across the acts. "
-        "Number them Concept 1, Concept 2, and Concept 3."
-    )
+    per_act  = max(1, n_chaps // n_acts)
+    protagonist = config.get("protagonist") or "The protagonist"
+    premise     = config.get("premise", "")
+    genre       = config.get("genre", "fiction")
+    setting     = config.get("setting") or "not specified"
+    antagonist  = config.get("antagonist") or "none"
 
     provider = get_active_provider()
-    open_resp = ""
-    
-    async for token in provider.stream(
-        messages=[
-            {"role": "system", "content": "You are an expert novelist brainstorming story arcs. Be highly creative."},
-            {"role": "user", "content": open_msg}
-        ],
-        max_tokens=1500,
-        temperature=0.8,
-        stop=[],
-    ):
-        open_resp += token
 
-    # --- Phase 2: CLOSE ---
-    close_msg = (
-        "Here are 3 structural concepts for the book:\n\n"
-        f"{open_resp}\n\n"
-        "Evaluate these 3 paths and select the one with the strongest emotional arc, richest conflict, and best pacing. "
-        "Discard the other two. "
-        "Map the selected path into a complete, highly detailed outline.\n\n"
-        f"CRITICAL REQUIREMENT: You MUST generate exactly {n_acts} Acts and exactly {n_chaps} Chapters overall "
-        f"distributed across those acts, with {spc} scenes each.\n"
-        "Each scene beat MUST be a specific action-verb sentence: what the protagonist discovers, decides, loses, "
-        "or confronts in that scene. No placeholders. No vague titles.\n"
-        "Generate the complete outline in exactly the Markdown format requested by the system prompt. Do not output anything else."
+    # ── Phase 1: SPINE ────────────────────────────────────────────────────────
+    # Generate 9 major story turns — 3 per act — as single sentences.
+    # These anchor every chapter beat that follows.
+    spine_prompt = (
+        f"Genre: {genre}\nPremise: {premise}\n"
+        f"Protagonist: {protagonist}\nAntagonist: {antagonist}\n"
+        f"Setting: {setting}\n\n"
+        f"Write the STORY SPINE for this {genre} novel: exactly 9 major plot turns, "
+        f"3 per act (Setup / Confrontation / Resolution).\n"
+        "Each turn is ONE sentence describing a concrete event that changes the story.\n"
+        "Format exactly as:\n"
+        "ACT 1:\n1. [event]\n2. [event]\n3. [event]\n"
+        "ACT 2:\n4. [event]\n5. [event]\n6. [event]\n"
+        "ACT 3:\n7. [event]\n8. [event]\n9. [event]\n"
+        "No filler. No vague descriptions. Each event must be different."
     )
 
-    full_text = ""
-    # 40 scenes × ~50 words/scene in JSON overhead ≈ 3200 tokens needed
+    spine_text = ""
     async for token in provider.stream(
         messages=[
-            {"role": "system", "content": _OUTLINE_SYSTEM},
-            {"role": "user", "content": close_msg}
+            {"role": "system", "content": "You are a story architect. Generate a tight story spine."},
+            {"role": "user",   "content": spine_prompt},
         ],
-        max_tokens=3200,
-        temperature=0.5,
+        max_tokens=600,
+        temperature=0.75,
         stop=[],
     ):
-        full_text += token
+        spine_text += token
 
-    outline = _parse_outline(full_text, config)
-    outline  = await _validate_and_repair_outline(outline, config, provider)
+    print(f"[Quill] Story spine generated ({len(spine_text.split())} words).")
+
+    # ── Phase 2: CHAPTER-BY-CHAPTER EXPANSION ─────────────────────────────────
+    # Build the chapter list (act assignment, chapter index)
+    chapters_plan: list[tuple[int, int, str]] = []  # (act_idx 0-2, chap_num, chap_title)
+    act_names = ["Act 1: Setup", "Act 2: Confrontation", "Act 3: Resolution"]
+
+    chap_num = 1
+    for act_i in range(n_acts):
+        count = per_act if act_i < n_acts - 1 else (n_chaps - per_act * (n_acts - 1))
+        count = max(1, count)
+        for _ in range(count):
+            chapters_plan.append((act_i, chap_num, f"Chapter {chap_num}"))
+            chap_num += 1
+
+    # Build acts structure
+    acts: list[dict] = [
+        {"name": act_names[i], "chapters": []}
+        for i in range(n_acts)
+    ]
+
+    all_accepted_beats: list[str] = []  # global anti-repetition context
+
+    for act_i, chap_num, chap_title in chapters_plan:
+        act_name = act_names[act_i]
+        prior_context = (
+            "\n".join(f"- {b}" for b in all_accepted_beats[-16:])
+            if all_accepted_beats else "None yet."
+        )
+
+        chap_prompt = (
+            f"STORY SPINE:\n{spine_text}\n\n"
+            f"STORY SO FAR (beats already written — do NOT repeat any):\n"
+            f"{prior_context}\n\n"
+            f"Now write ONLY the beats for: {act_name} — {chap_title}\n"
+            f"Write exactly {spc} scene beat(s). Each beat:\n"
+            f"  - Is a specific action-verb sentence (protagonist does/finds/loses/decides something concrete)\n"
+            f"  - Is completely different from every beat in 'STORY SO FAR'\n"
+            f"  - Advances the story from the last beat listed above\n"
+            f"Format: one beat per line, starting with '- '\n"
+            f"No headers, no numbering, no explanations. Just {spc} bullet line(s)."
+        )
+
+        chap_text = ""
+        async for token in provider.stream(
+            messages=[
+                {"role": "system",
+                 "content": (
+                     "You are a story editor writing the next chapter's beats. "
+                     "Never reuse a location, action, or discovery already listed. "
+                     "Each beat must move the story forward."
+                 )},
+                {"role": "user", "content": chap_prompt},
+            ],
+            max_tokens=max(150, spc * 80),
+            temperature=0.78,
+            stop=[],
+        ):
+            chap_text += token
+
+        # Parse beats from this chapter's response
+        beats: list[str] = []
+        for line in chap_text.strip().split("\n"):
+            line = line.strip().lstrip("-•*123456789. ").strip()
+            if len(line) > 20:
+                beats.append(line)
+            if len(beats) >= spc:
+                break
+
+        # Pad if model returned too few
+        while len(beats) < spc:
+            beats.append(
+                f"{protagonist} faces an unexpected consequence from the previous event "
+                f"and must adapt their approach in {setting}."
+            )
+
+        # Register accepted beats globally
+        all_accepted_beats.extend(beats)
+
+        acts[act_i]["chapters"].append({
+            "title":  chap_title,
+            "scenes": beats,
+        })
+
+        print(f"[Quill] Outline: {act_name} / {chap_title} — {len(beats)} beats generated.")
+
+    outline = {"title": premise[:50] + "...", "acts": acts}
+
+    # ── Phase 3: VALIDATE ─────────────────────────────────────────────────────
+    outline = await _validate_and_repair_outline(outline, config, provider)
     return outline
+
 
 
 def _parse_outline(text: str, config: dict) -> dict:
