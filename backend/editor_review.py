@@ -195,9 +195,18 @@ _APPROACH_STRIP_RE = re.compile(
 )
 
 
+_APPROACH_INLINE_RE = re.compile(
+    r"\b(Approach\s+(?:One|Two|Three|Four|Five|\d+|#\d+)[\s\-–—]*[\w\s\-–—()]*?)(?=[\.\,\;\:\"\']|\s{2,}|$)",
+    re.IGNORECASE,
+)
+
+
 def _strip_labels(content: str) -> str:
-    """Remove approach/label lines and clean up resulting blank lines."""
+    """Remove approach/label lines and inline approach references."""
+    # Pass 1: full lines that are purely approach markers
     content = _APPROACH_STRIP_RE.sub("", content)
+    # Pass 2: inline fragments like "Approach Three - Dialogue-Driven (Approach Two)"
+    content = _APPROACH_INLINE_RE.sub("", content)
     # Collapse 3+ blank lines into 2
     content = re.sub(r"\n{3,}", "\n\n", content)
     return content.strip()
