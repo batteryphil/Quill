@@ -189,7 +189,31 @@ async function renderProjectList() {
   for (const p of projects) {
     const item = document.createElement("div");
     item.className = "project-list-item";
-    item.textContent = p.title;
+    item.style.display = "flex";
+    item.style.alignItems = "center";
+
+    const titleSpan = document.createElement("span");
+    titleSpan.textContent = p.title;
+    titleSpan.style.flex = "1";
+
+    const delBtn = document.createElement("button");
+    delBtn.innerHTML = "🗑️";
+    delBtn.style.cssText = "background:transparent;border:none;cursor:pointer;opacity:0.5;";
+    delBtn.title = "Delete Project";
+    
+    delBtn.onmouseover = () => delBtn.style.opacity = "1";
+    delBtn.onmouseout = () => delBtn.style.opacity = "0.5";
+    
+    delBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Are you sure you want to permanently delete "${p.title}"?`)) return;
+      await fetch(`/api/projects/${p.id}`, { method: "DELETE" });
+      renderProjectList();
+    });
+
+    item.appendChild(titleSpan);
+    item.appendChild(delBtn);
+
     item.addEventListener("click", () => {
       document.getElementById("project-picker").classList.add("hidden");
       document.getElementById("main-layout").classList.remove("hidden");

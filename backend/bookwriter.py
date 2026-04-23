@@ -175,8 +175,9 @@ async def _generate_outline(config: dict) -> dict:
         f"Setting: {config.get('setting') or 'Not specified'}\n"
         f"Tone: {config.get('tone', 'balanced')}\n"
         f"POV: {config.get('pov', 'third person limited')}\n"
-        f"Structure: {n_acts} acts, {n_chaps} chapters, {spc} scenes per chapter.\n"
+        f"Structure: {n_acts} acts, {n_chaps} chapters total, {spc} scenes per chapter.\n"
         f"Chapters per act: roughly {per_act}.\n\n"
+        f"CRITICAL CONSTRAINT: The outline must ultimately contain exactly {n_acts} acts and exactly {n_chaps} chapters overall.\n\n"
         "Generate 3 completely different structural concepts for this outline based on the premise.\n"
         "Just describe 3 different ways the plot could unfold across the acts. "
         "Number them Concept 1, Concept 2, and Concept 3."
@@ -203,6 +204,7 @@ async def _generate_outline(config: dict) -> dict:
         "Evaluate these 3 paths and select the one with the strongest emotional arc, richest conflict, and best pacing. "
         "Discard the other two. "
         "Map the selected path into a complete, highly detailed outline.\n\n"
+        f"CRITICAL REQUIREMENT: You MUST generate exactly {n_acts} Acts and exactly {n_chaps} Chapters overall distributed across those acts, with {spc} scenes each.\n"
         "Generate the complete outline in exactly the Markdown format requested by the system prompt. Do not output anything else."
     )
 
@@ -261,6 +263,23 @@ def _parse_outline(text: str, config: dict) -> dict:
         acts.append(current_act)
 
     if acts:
+        # --- Defensive Chapter Padding ---
+        # If the local LLM ignores length constraints, defensively pad the outline
+        target_chaps = config.get("num_chapters", 0)
+        spc = config.get("scenes_per_chapter", 3)
+        
+        total_gen = sum(len(a.get("chapters", [])) for a in acts)
+        
+        if total_gen > 0 and total_gen < target_chaps:
+            missing = target_chaps - total_gen
+            last_act = acts[-1]
+            for i in range(missing):
+                chap_n = total_gen + i + 1
+                last_act["chapters"].append({
+                    "title": f"Chapter {chap_n}",
+                    "scenes": [f"Narrative continues from previous chapter." for _ in range(spc)],
+                })
+
         return {"title": config.get("premise", "Untitled")[:50] + "...", "acts": acts}
 
     # Fallback if markdown parsing completely failed
