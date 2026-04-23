@@ -161,6 +161,58 @@ _OUTLINE_SYSTEM = (
 )
 
 
+# Patterns that indicate the model leaked prompt text into the output
+_BEAT_JUNK_RE = re.compile(
+    r"^(note[:\*]|story so far|beats already written|you are in act|"
+    r"do not revisit|output exactly|write only|write exactly|"
+    r"each beat|rules:|format:|no meta|no header|no explanation|"
+    r"\*+note\*+|\d+\.\s+(one beat|each beat)|chapter \d+\s*$|"
+    r"^\*+\s*$|^-+\s*$)",
+    re.IGNORECASE,
+)
+
+_BEAT_META_RE = re.compile(
+    r"(\*\*introducing|\*\*note|\(introducing|\(note:|\[note|\bfor example\b|"
+    r"story continues|as outlined|the story continues from|"
+    r"first two beats have been provided)",
+    re.IGNORECASE,
+)
+
+
+def _clean_beat(raw: str) -> str:
+    """
+    Strip prompt leakage and meta-commentary from a model-generated beat line.
+
+    The model sometimes echoes back instructions ('Note:** Each beat must...')
+    or adds meta-commentary like '(Introducing the antagonist...)'.
+    This function returns an empty string for any line that looks like
+    instructions rather than narrative prose.
+
+    Args:
+        raw: A single raw line from the model's chapter output.
+
+    Returns:
+        Cleaned beat string (stripped of bullet prefix), or empty string
+        if the line should be discarded.
+    """
+    line = raw.strip().lstrip("-•*123456789. ").strip()
+    # Too short to be a real beat
+    if len(line) < 25:
+        return ""
+    # Looks like a prompt instruction echoed back
+    if _BEAT_JUNK_RE.search(line):
+        return ""
+    # Contains meta-commentary markers
+    if _BEAT_META_RE.search(line):
+        # Strip the meta part if it's a suffix (e.g. trailing "**(Introducing...)**")
+        line = re.sub(r"\s*[\(\*]+[Ii]ntroducing[^)]*[\)\*]+\s*", "", line).strip()
+        line = re.sub(r"\s*\*\*[Nn]ote[:\*][^*]*\*\*\s*", "", line).strip()
+        # If mostly gone, discard
+        if len(line) < 25:
+            return ""
+    return line
+
+
 async def _generate_outline(config: dict) -> dict:
     """
     Generate a structured book outline using hierarchical generation.
@@ -250,6 +302,10 @@ async def _generate_outline(config: dict) -> dict:
 
     all_accepted_beats: list[str] = []  # global anti-repetition context
 
+    # Spine lines split by act for targeted Act 3 anchoring
+    spine_lines = [l.strip() for l in spine_text.split("\n") if l.strip()]
+    act3_spine  = "\n".join(spine_lines[-4:]) if len(spine_lines) >= 4 else spine_text
+
     for act_i, chap_num, chap_title in chapters_plan:
         act_name = act_names[act_i]
         prior_context = (
@@ -257,17 +313,29 @@ async def _generate_outline(config: dict) -> dict:
             if all_accepted_beats else "None yet."
         )
 
+        # Act 3 gets an explicit anchor showing ONLY the resolution spine turns
+        # so the model can't drift back to shelter/fire/recover loops
+        act_anchor = ""
+        if act_i == 2:
+            act_anchor = (
+                f"\nYOU ARE IN ACT 3 — RESOLUTION. The story must close:\n"
+                f"{act3_spine}\n"
+                f"Do NOT revisit: shelter, fire, recovering, descending the same cave, "
+                f"or any character/location that already appeared in the last 4 beats.\n"
+            )
+
         chap_prompt = (
-            f"STORY SPINE:\n{spine_text}\n\n"
-            f"STORY SO FAR (beats already written — do NOT repeat any):\n"
+            f"STORY SPINE:\n{spine_text}\n"
+            f"{act_anchor}\n"
+            f"BEATS ALREADY WRITTEN (do NOT reuse any person, place, or action from these):\n"
             f"{prior_context}\n\n"
-            f"Now write ONLY the beats for: {act_name} — {chap_title}\n"
-            f"Write exactly {spc} scene beat(s). Each beat:\n"
-            f"  - Is a specific action-verb sentence (protagonist does/finds/loses/decides something concrete)\n"
-            f"  - Is completely different from every beat in 'STORY SO FAR'\n"
-            f"  - Advances the story from the last beat listed above\n"
-            f"Format: one beat per line, starting with '- '\n"
-            f"No headers, no numbering, no explanations. Just {spc} bullet line(s)."
+            f"Write ONLY the {spc} scene beat(s) for: {act_name} — {chap_title}\n"
+            f"Rules:\n"
+            f"  1. One beat per line, starting with '- '\n"
+            f"  2. Each beat is ONE action-verb sentence: what {protagonist} does, finds, loses, or decides\n"
+            f"  3. Every beat must introduce something NEW not in the beats above\n"
+            f"  4. No meta-commentary, no notes, no explanations — only the {spc} beat line(s)\n"
+            f"Output exactly {spc} line(s) starting with '- '. Nothing else."
         )
 
         chap_text = ""
@@ -275,24 +343,23 @@ async def _generate_outline(config: dict) -> dict:
             messages=[
                 {"role": "system",
                  "content": (
-                     "You are a story editor writing the next chapter's beats. "
-                     "Never reuse a location, action, or discovery already listed. "
-                     "Each beat must move the story forward."
+                     f"You are a story editor. Output ONLY {spc} scene beat line(s) starting with '- '. "
+                     "No explanations. No notes. No headers. Just the beats."
                  )},
                 {"role": "user", "content": chap_prompt},
             ],
-            max_tokens=max(150, spc * 80),
+            max_tokens=max(150, spc * 90),
             temperature=0.78,
             stop=[],
         ):
             chap_text += token
 
-        # Parse beats from this chapter's response
+        # Parse and clean beats from this chapter's response
         beats: list[str] = []
         for line in chap_text.strip().split("\n"):
-            line = line.strip().lstrip("-•*123456789. ").strip()
-            if len(line) > 20:
-                beats.append(line)
+            cleaned = _clean_beat(line)
+            if cleaned:
+                beats.append(cleaned)
             if len(beats) >= spc:
                 break
 
