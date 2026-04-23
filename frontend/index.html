@@ -73,6 +73,11 @@
                 title="Provider settings">
           &#x2699;
         </button>
+        <button id="btn-review"
+                class="sidebar-icon-btn"
+                title="Review & auto-fix story">
+          &#x1F50D;
+        </button>
         <button id="btn-export"
                 class="sidebar-icon-btn"
                 title="Export manuscript">
@@ -374,6 +379,16 @@
     const projectId    = document.body.dataset.projectId;
     const projectTitle = document.getElementById("project-title")?.textContent?.trim() || "Untitled";
     openBookWriter(projectId, projectTitle);
+  });
+</script>
+
+<!-- ── Review panel trigger ──────────────────────────────────── -->
+<script type="module">
+  import { openReviewPanel } from "/js/review.js?v=2";
+  document.getElementById("btn-review")?.addEventListener("click", () => {
+    const projectId    = document.body.dataset.projectId;
+    const projectTitle = document.getElementById("project-title")?.textContent?.trim() || "Untitled";
+    openReviewPanel(projectId, projectTitle);
   });
 </script>
 

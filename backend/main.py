@@ -19,6 +19,7 @@ from .export      import router as export_router
 from .settings    import router as settings_router
 from .updater     import router as updater_router
 from .bookwriter  import router as bookwriter_router
+from .editor_review import router as review_router
 
 # ---------------------------------------------------------------------------
 # App
@@ -59,6 +60,7 @@ app.include_router(export_router)
 app.include_router(settings_router)
 app.include_router(updater_router)
 app.include_router(bookwriter_router)
+app.include_router(review_router)
 
 # RAG endpoints (query + rebuild)
 @app.post("/api/rag/rebuild/{project_id}")
