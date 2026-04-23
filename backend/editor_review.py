@@ -81,7 +81,7 @@ def _load_scenes(project_id: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _APPROACH_RE = re.compile(
-    r"^\s*\*{1,2}(Approach|Narrative Approach|Narrative:)[^*\n]*\*{0,2}\s*$",
+    r"^\s*\*{1,2}\s*(Approach|Narrative Approach|Narrative)[^\n]*\*{0,2}\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -189,7 +189,7 @@ def _detect_character_drift(scenes: list[dict], protagonist: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _APPROACH_STRIP_RE = re.compile(
-    r"^\s*\*{0,2}(Approach|Narrative Approach|Narrative:|Concept|Option)\s*[^:\n]*:?\*{0,2}\s*\n?",
+    r"^[ \t]*\*{0,2}\s*(Approach|Narrative Approach|Narrative:?)\s*[#\w]*[:\-\u2013\u2014]?\s*[^\n]*\*{0,2}[ \t]*\n?",
     re.IGNORECASE | re.MULTILINE,
 )
 
