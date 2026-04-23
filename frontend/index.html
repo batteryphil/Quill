@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Quill — AI-first local book writing environment">
   <title>Quill</title>
-  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/main.css?v=2">
 
   <!--
     Zero-build ProseMirror via ES Module import map.
@@ -267,11 +267,11 @@
 
 <!-- ── Ghost text Tab/Esc hint visibility logic ───────────── -->
 <script type="module">
-  import { ghostKey } from "/js/ghost.js";
+  import { ghostKey } from "/js/ghost.js?v=2";
 
   // We need the ProseMirror view reference from editor.js
   // Import it and watch the ghost plugin state
-  import { view } from "/js/editor.js";
+  import { view } from "/js/editor.js?v=2";
 
   const hint = document.getElementById("ghost-hint");
 
@@ -287,7 +287,7 @@
 </script>
 
 <!-- ── Binder (loads project list + handles navigation) ─── -->
-<script type="module" src="/js/binder.js"></script>
+<script type="module" src="/js/binder.js?v=2"></script>
 
 <!-- ── Keyboard shortcut: Ctrl+Enter → Continue ──────────── -->
 <script type="module">
@@ -301,8 +301,8 @@
 
 <!-- ── Brainstorm panel: regenerate + close ───────────────── -->
 <script type="module">
-  import { run as runBrainstorm, closeBrainstorm } from "/js/brainstorm.js";
-  import { view }                                   from "/js/editor.js";
+  import { run as runBrainstorm, closeBrainstorm } from "/js/brainstorm.js?v=2";
+  import { view }                                   from "/js/editor.js?v=2";
 
   document.getElementById("brainstorm-regenerate")?.addEventListener("click", async () => {
     // Re-run with updated question
@@ -333,7 +333,7 @@
 
 <!-- ── Export modal trigger ─────────────────────────────────── -->
 <script type="module">
-  import { openExportModal } from "/js/export.js";
+  import { openExportModal } from "/js/export.js?v=2";
 
   document.getElementById("btn-export")?.addEventListener("click", () => {
     const title = document.getElementById("project-title")?.textContent?.trim() || "Manuscript";
@@ -350,13 +350,13 @@
 
 <!-- ── Settings modal trigger ──────────────────────────────────── -->
 <script type="module">
-  import { openSettingsModal } from "/js/settings.js";
+  import { openSettingsModal } from "/js/settings.js?v=2";
   document.getElementById("btn-settings")?.addEventListener("click", openSettingsModal);
 </script>
 
 <!-- ── Update modal trigger ─────────────────────────────────── -->
 <script type="module">
-  import { initUpdater, openUpdateModal } from "/js/updater.js";
+  import { initUpdater, openUpdateModal } from "/js/updater.js?v=2";
   document.getElementById("btn-update")?.addEventListener("click", openUpdateModal);
   // Check on load (throttled to once/hour)
   initUpdater();
@@ -364,7 +364,7 @@
 
 <!-- ── Book Writer trigger ─────────────────────────────── -->
 <script type="module">
-  import { openBookWriter } from "/js/bookwriter.js";
+  import { openBookWriter } from "/js/bookwriter.js?v=2";
   document.getElementById("btn-write-book")?.addEventListener("click", () => {
     const projectId    = document.body.dataset.projectId;
     const projectTitle = document.getElementById("project-title")?.textContent?.trim() || "Untitled";
