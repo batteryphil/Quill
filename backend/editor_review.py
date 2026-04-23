@@ -139,10 +139,73 @@ def _detect_repetition(scene: dict) -> list[dict]:
                 "scene_title": scene["title"],
                 "description": f"Paragraph repeated at position {i+1} (first seen at {seen[key]+1}).",
                 "fix_type":    "strip_duplicates",
-                "detail":      p[:120] + "…",
+                "detail":      p[:120] + "\u2026",
             })
         else:
             seen[key] = i
+    return issues
+
+
+def _jaccard(a: str, b: str) -> float:
+    """
+    Compute Jaccard similarity between two strings based on content word sets.
+
+    Ignores stopwords and short words (<4 chars) to focus on meaningful content.
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        Float in [0, 1] where 1.0 is identical content.
+    """
+    _stop = {"the", "and", "was", "with", "that", "this", "his", "her", "they",
+             "for", "had", "but", "from", "into", "not", "have", "him", "she",
+             "what", "when", "where", "who", "will", "would", "could", "should",
+             "been", "were", "are", "has", "its", "our", "your", "their",
+             "than", "then", "them", "there", "which", "more", "also", "just"}
+
+    def words(s: str) -> set[str]:
+        """Extract content words from string."""
+        return {
+            w.lower() for w in re.findall(r"\b[a-zA-Z]{4,}\b", s)
+            if w.lower() not in _stop
+        }
+
+    wa, wb = words(a), words(b)
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def _detect_semantic_repetition(scene: dict) -> list[dict]:
+    """
+    Find consecutive paragraphs with >60% Jaccard content-word overlap.
+
+    Catches "same idea, different words" looping that exact-match dedup misses.
+
+    Args:
+        scene: Scene dict with 'content', 'id', 'title'.
+
+    Returns:
+        List of issue dicts with fix_type 'strip_semantic_duplicates'.
+    """
+    paragraphs = [p.strip() for p in scene["content"].split("\n\n") if len(p.strip()) > 80]
+    issues = []
+    for i in range(len(paragraphs) - 1):
+        sim = _jaccard(paragraphs[i], paragraphs[i + 1])
+        if sim >= 0.60:
+            issues.append({
+                "type":        "semantic_repetition",
+                "scene_id":    scene["id"],
+                "scene_title": scene["title"],
+                "description": (
+                    f"Paragraphs {i+1} and {i+2} are {sim*100:.0f}% semantically similar — "
+                    "same content restated in different words."
+                ),
+                "fix_type":    "strip_semantic_duplicates",
+                "detail":      paragraphs[i + 1][:120] + "\u2026",
+            })
     return issues
 
 
@@ -225,6 +288,35 @@ def _strip_duplicate_paragraphs(content: str) -> str:
     return "\n\n".join(unique)
 
 
+def _strip_semantic_duplicate_paragraphs(content: str) -> str:
+    """
+    Remove semantically duplicate consecutive paragraphs.
+
+    Keeps the first of any pair sharing >60% Jaccard content-word overlap.
+    Runs in a single pass so chains of similar paragraphs are fully collapsed.
+
+    Args:
+        content: Raw scene text.
+
+    Returns:
+        Cleaned text with semantic duplicates removed.
+    """
+    parts = content.split("\n\n")
+    kept: list[str] = []
+    for part in parts:
+        if not kept or len(part.strip()) < 80:
+            kept.append(part)
+            continue
+        # Compare against the last substantive kept paragraph
+        last_substantial = next(
+            (k for k in reversed(kept) if len(k.strip()) >= 80), None
+        )
+        if last_substantial is None or _jaccard(last_substantial, part) < 0.60:
+            kept.append(part)
+        # else: skip — it's semantically the same as the previous paragraph
+    return "\n\n".join(kept)
+
+
 def _normalize_names(content: str, canonical: str, variants: list[str]) -> str:
     """Replace all variant spellings with the canonical name."""
     for v in variants:
@@ -277,6 +369,7 @@ async def review_project(project_id: str, req: ReviewRequest) -> dict:
         issues += _detect_approach_labels(sc)
         issues += _detect_empty_scenes(sc)
         issues += _detect_repetition(sc)
+        issues += _detect_semantic_repetition(sc)
 
     # Character drift is cross-scene
     protagonist = req.protagonist
@@ -366,10 +459,15 @@ async def fix_project(project_id: str, req: FixRequest) -> dict:
             content = _strip_labels(content)
             ops.append("strip_labels")
 
-        # Duplicate paragraph removal
+        # Duplicate paragraph removal (exact match)
         if any(i["fix_type"] == "strip_duplicates" for i in by_scene.get(sid, [])):
             content = _strip_duplicate_paragraphs(content)
             ops.append("strip_duplicates")
+
+        # Semantic duplicate removal (Jaccard similarity)
+        if any(i["fix_type"] == "strip_semantic_duplicates" for i in by_scene.get(sid, [])):
+            content = _strip_semantic_duplicate_paragraphs(content)
+            ops.append("strip_semantic_duplicates")
 
         # Name normalization
         if name_canonical and name_variants:

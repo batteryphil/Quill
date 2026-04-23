@@ -142,7 +142,7 @@ _JOBS: dict[str, BookJob] = {}
 # ---------------------------------------------------------------------------
 
 _OUTLINE_SYSTEM = (
-    "You are an expert novelist creating a detailed book outline. "
+    "You are an expert novelist creating a detailed book outline.\n"
     "Output ONLY valid Markdown format — absolutely no JSON, no backticks, no other text.\n\n"
     "Required format:\n"
     "# Act 1: Setup\n"
@@ -150,7 +150,14 @@ _OUTLINE_SYSTEM = (
     "- Scene beat description here.\n"
     "- Another scene beat.\n"
     "## Chapter 2\n"
-    "- Scene beat description here.\n"
+    "- Scene beat description here.\n\n"
+    "CRITICAL RULES FOR SCENE BEATS:\n"
+    "1. Every scene beat MUST be a complete action-verb sentence describing a specific event.\n"
+    "   GOOD: 'Jaxon discovers a hidden compartment in the journal containing a coded map fragment.'\n"
+    "   BAD: 'Narrative continues' or 'Scene three' or vague descriptions.\n"
+    "2. Each beat must describe what CHANGES: what the protagonist discovers, loses, decides, or confronts.\n"
+    "3. Beats must form a causal chain: each scene's outcome sets up the next scene's conflict.\n"
+    "4. No two consecutive beats may describe the same emotional state or location without change.\n"
 )
 
 
@@ -204,7 +211,10 @@ async def _generate_outline(config: dict) -> dict:
         "Evaluate these 3 paths and select the one with the strongest emotional arc, richest conflict, and best pacing. "
         "Discard the other two. "
         "Map the selected path into a complete, highly detailed outline.\n\n"
-        f"CRITICAL REQUIREMENT: You MUST generate exactly {n_acts} Acts and exactly {n_chaps} Chapters overall distributed across those acts, with {spc} scenes each.\n"
+        f"CRITICAL REQUIREMENT: You MUST generate exactly {n_acts} Acts and exactly {n_chaps} Chapters overall "
+        f"distributed across those acts, with {spc} scenes each.\n"
+        "Each scene beat MUST be a specific action-verb sentence: what the protagonist discovers, decides, loses, "
+        "or confronts in that scene. No placeholders. No vague titles.\n"
         "Generate the complete outline in exactly the Markdown format requested by the system prompt. Do not output anything else."
     )
 
@@ -264,20 +274,48 @@ def _parse_outline(text: str, config: dict) -> dict:
 
     if acts:
         # --- Defensive Chapter Padding ---
-        # If the local LLM ignores length constraints, defensively pad the outline
+        # If the local LLM ignores length constraints, pad with meaningful structural beats
         target_chaps = config.get("num_chapters", 0)
         spc = config.get("scenes_per_chapter", 3)
-        
         total_gen = sum(len(a.get("chapters", [])) for a in acts)
-        
+
+        # Build meaningful fallback beats based on act position
+        act_beat_templates = [
+            # Act 1 beats
+            [
+                "{prot} arrives at the location and notices something is wrong.",
+                "{prot} discovers the first clue and realizes the stakes are higher than expected.",
+                "{prot} makes a decision that commits them to the main conflict.",
+            ],
+            # Act 2 beats
+            [
+                "{prot} pursues a lead but faces their first major setback.",
+                "{prot} uncovers a hidden truth that recontextualizes everything they knew.",
+                "{prot} reaches a point of no return and must confront the antagonist.",
+            ],
+            # Act 3 beats
+            [
+                "{prot} faces the climactic confrontation with everything on the line.",
+                "{prot} resolves the central conflict and pays the cost of the journey.",
+                "{prot} reaches a new equilibrium, changed by what they experienced.",
+            ],
+        ]
+        prot = config.get("protagonist", "The protagonist")
+
         if total_gen > 0 and total_gen < target_chaps:
             missing = target_chaps - total_gen
             last_act = acts[-1]
+            act_idx = min(len(acts) - 1, 2)
+            beats = act_beat_templates[act_idx]
             for i in range(missing):
                 chap_n = total_gen + i + 1
+                chap_beats = [
+                    beats[s % len(beats)].format(prot=prot)
+                    for s in range(spc)
+                ]
                 last_act["chapters"].append({
-                    "title": f"Chapter {chap_n}",
-                    "scenes": [f"Narrative continues from previous chapter." for _ in range(spc)],
+                    "title":  f"Chapter {chap_n}",
+                    "scenes": chap_beats,
                 })
 
         return {"title": config.get("premise", "Untitled")[:50] + "...", "acts": acts}
@@ -327,13 +365,25 @@ def _synthesise_outline(config: dict) -> dict:
 _SCENE_SYSTEM_TMPL = (
     "You are a skilled {genre} novelist writing in {pov} POV. "
     "Write vivid, immersive, character-driven prose. Show, don't tell. "
-    "No chapter headers or scene numbers — just continuous prose. "
+    "No chapter headers, scene numbers, or meta-commentary — just continuous prose.\n"
     "Target length: ~{words} words.\n\n"
+    "STRICT RULES (violation breaks the story):\n"
+    "1. Every sentence must advance the scene. Never restate what a prior sentence already said.\n"
+    "2. Never write 'Approach', 'Option', 'Version', 'Method', or any numbered label.\n"
+    "3. Never repeat a character's name more than twice per paragraph.\n"
+    "4. The scene must END in a different emotional or physical state than it STARTS.\n"
+    "5. No filler phrases: 'couldn't help but feel', 'heart pounding', 'mind racing' — find fresh language.\n\n"
     "STORY CONTEXT:\n"
     "Title: {title}\n"
     "Premise: {premise}\n"
     "{char_block}"
     "Setting: {setting}"
+)
+
+# Label patterns to strip from Phase 1 output before feeding to Phase 2
+_OPEN_LABEL_RE = re.compile(
+    r"^(?:Option|Event|Idea|Plot\s+Event|Possibility|Path|Choice|Alternative)\s*[\d#]+[:\.]?",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
@@ -347,7 +397,12 @@ async def _write_scene(
     book_title:      str = "",
 ) -> AsyncIterator[str]:
     """
-    Stream prose tokens for a single scene.
+    Stream prose tokens for a single scene using an improved two-phase workflow.
+
+    Phase 1 (OPEN): Brainstorm 3 concrete PLOT EVENTS that could happen in this
+    scene — what the characters do, discover, or lose. No style labels.
+    Phase 2 (CLOSE): Pick the most dramatically compelling event and write the
+    scene as continuous prose with strict anti-repetition rules enforced.
 
     Args:
         config:          BookConfig dict.
@@ -372,13 +427,13 @@ async def _write_scene(
         char_block += "\n"
 
     system = _SCENE_SYSTEM_TMPL.format(
-        genre   = config.get("genre", "fiction"),
-        pov     = config.get("pov", "third person limited"),
-        words   = words_per_scene,
-        title   = book_title or "Untitled",
-        premise = config.get("premise", "")[:400],   # cap to ~300 tokens
+        genre      = config.get("genre", "fiction"),
+        pov        = config.get("pov", "third person limited"),
+        words      = words_per_scene,
+        title      = book_title or "Untitled",
+        premise    = config.get("premise", "")[:400],
         char_block = char_block,
-        setting = config.get("setting", "not specified"),
+        setting    = config.get("setting", "not specified"),
     )
 
     context_parts = []
@@ -386,36 +441,56 @@ async def _write_scene(
         context_parts.append(f"STORY CONTEXT:\n{rag_context}")
     if prev_ending:
         context_parts.append(f"PREVIOUS SCENE ENDED:\n{prev_ending}")
+    ctx = "\n\n".join(context_parts)
 
     provider = get_active_provider()
 
-    # --- Phase 1: OPEN ---
-    open_msg = "\n\n".join(context_parts) + (
-        f"\n\nChapter: {chapter_title}\n"
-        f"Scene: {scene_beat}\n\n"
-        "Generate 3 distinct narrative approaches to execute this scene beat (e.g., action-heavy vs introspective vs dialogue-driven). "
-        "Do NOT write the full scene yet. Just outline 3 different ways to approach it stylistically and narratively. "
-        "Number them Approach 1, Approach 2, and Approach 3."
+    # ── Phase 1: OPEN ── brainstorm 3 concrete PLOT EVENTS, no style labels ──
+    open_msg = (
+        f"{ctx}\n\n" if ctx else ""
+    ) + (
+        f"Chapter: {chapter_title}\n"
+        f"Scene beat: {scene_beat}\n\n"
+        "Brainstorm exactly 3 SPECIFIC PLOT EVENTS that could happen in this scene.\n"
+        "A plot event is something concrete: a character discovers X, loses Y, confronts Z, "
+        "makes a decision, finds a clue, or changes their situation in a measurable way.\n"
+        "Do NOT describe style or tone. Do NOT write prose yet.\n"
+        "Format — just three short bullet points, each starting with an action verb:\n"
+        "• [event one]\n"
+        "• [event two]\n"
+        "• [event three]"
     )
 
-    open_sys = "You are an expert novelist experimenting with narrative choices. Be creative."
+    open_sys = (
+        "You are an expert story planner. Generate specific, concrete plot events. "
+        "Never use labels like 'Approach', 'Option', or 'Method'. "
+        "Each bullet must describe what HAPPENS, not how it is written."
+    )
     open_resp = ""
     async for token in provider.stream(
-        messages=[{"role": "system", "content": open_sys}, {"role": "user", "content": open_msg}],
-        max_tokens=1000,
-        temperature=0.8,
+        messages=[{"role": "system", "content": open_sys},
+                  {"role": "user",   "content": open_msg}],
+        max_tokens=400,
+        temperature=0.75,
         stop=[],
     ):
         open_resp += token
 
-    # --- Phase 2: CLOSE ---
-    close_msg = "\n\n".join(context_parts) + (
-        f"\n\nChapter: {chapter_title}\n"
-        f"Scene: {scene_beat}\n\n"
-        "Here are 3 possible narrative approaches to execute this scene:\n\n"
-        f"{open_resp}\n\n"
-        "Evaluate them and select the absolute best approach with the strongest emotional impact and distinctive voice. "
-        "Now, write the complete scene using ONLY the selected approach. "
+    # Strip any stray numbering/labels that leaked through
+    clean_events = _OPEN_LABEL_RE.sub("", open_resp).strip()
+
+    # ── Phase 2: CLOSE ── pick best event and write the scene ────────────────
+    close_msg = (
+        f"{ctx}\n\n" if ctx else ""
+    ) + (
+        f"Chapter: {chapter_title}\n"
+        f"Scene beat: {scene_beat}\n\n"
+        f"Three possible plot events for this scene:\n{clean_events}\n\n"
+        "Select the plot event with the strongest dramatic impact. "
+        "Do NOT mention which event you chose. "
+        "Write the complete scene as continuous prose — no headers, no labels, no meta-commentary. "
+        "The scene must end with the protagonist in a clearly different situation than at the start. "
+        "Every sentence must advance the story forward. "
         "Write the scene now:"
     )
 
@@ -427,10 +502,11 @@ async def _write_scene(
             {"role": "user",   "content": close_msg},
         ],
         max_tokens=max_tokens,
-        temperature=0.72,
+        temperature=0.70,
         stop=["---", "***", "# ", "## "],
     ):
         yield token
+
 
 
 # ---------------------------------------------------------------------------
