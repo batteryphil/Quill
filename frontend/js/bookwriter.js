@@ -481,6 +481,7 @@ function _showDashboard(overlay, card, jobId, outline, config, totalScenes) {
         pauseBtn.disabled       = true;
         cancelBtn.style.display = "none";
         doneMsg.style.display   = "";
+        card.querySelector("#bw-close-dash").style.display = "block";
         // Reload binder if project is open
         if (window.__binderRefresh) window.__binderRefresh();
         break;
@@ -489,7 +490,10 @@ function _showDashboard(overlay, card, jobId, outline, config, totalScenes) {
         es.close();
         statusBadge.textContent = "Cancelled";
         statusBadge.className   = "bw-status-badge bw-badge--error";
+        cancelBtn.style.display = "none";
         pauseBtn.disabled       = true;
+        card.querySelector("#bw-close-dash").style.display = "block";
+        if (window.__binderRefresh) window.__binderRefresh();
         break;
 
       case "error":

@@ -278,7 +278,12 @@ document.getElementById("btn-new-project")?.addEventListener("click", showNewPro
 document.getElementById("btn-new-project-sidebar")?.addEventListener("click", showNewProjectModal);
 
 // Expose binder refresh so bookwriter can trigger it after completion
-window.__binderRefresh = () => renderProjectList();
+window.__binderRefresh = () => {
+  renderProjectList();
+  if (document.body.dataset.projectId) {
+    refreshProject(document.body.dataset.projectId);
+  }
+};
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 
